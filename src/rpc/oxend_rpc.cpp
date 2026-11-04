@@ -213,12 +213,18 @@ namespace srouter::rpc
             //
             // TODO 2: also remove the don't-report-error-state code in router/router.cpp
             // (Router::OxendErrorState) once we are past that upgrade.
-            auto srv_it = snode.find("service_node_version");
-            if (srv_it == snode.end() || srv_it->get<std::array<int, 3>>() < std::array{11, 6, 0})
+            // XEQM ships Session Router as its routing layer from the start, so the Oxen 11.6
+            // "SR-required" transition gate does not apply: every registered XEQM service node
+            // is Session-Router-eligible.
+            if (_router.netid() != NetID::XEQM)
             {
-                log::debug(
-                    logcat, "Ignoring {} registration: uptime proof version does not require Session Router", rid);
-                continue;
+                auto srv_it = snode.find("service_node_version");
+                if (srv_it == snode.end() || srv_it->get<std::array<int, 3>>() < std::array{11, 6, 0})
+                {
+                    log::debug(
+                        logcat, "Ignoring {} registration: uptime proof version does not require Session Router", rid);
+                    continue;
+                }
             }
 
             registered.insert(rid);
