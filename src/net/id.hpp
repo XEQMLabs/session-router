@@ -9,7 +9,8 @@ namespace srouter
     enum class NetID
     {
         MAINNET = 0,
-        TESTNET = 1
+        TESTNET = 1,
+        XEQM = 2
     };
 
     inline std::string to_string(NetID n)
@@ -20,6 +21,8 @@ namespace srouter
                 return "session-router";
             case NetID::TESTNET:
                 return "testnet";
+            case NetID::XEQM:
+                return "xeqm";
             default:
                 return fmt::format("unknown network {}", static_cast<int>(n));
         }
@@ -31,6 +34,8 @@ namespace srouter
             return NetID::MAINNET;
         if (s == "testnet")
             return NetID::TESTNET;
+        if (s == "xeqm")
+            return NetID::XEQM;
         throw std::invalid_argument{"Invalid network id"};
     }
 
