@@ -1250,8 +1250,12 @@ namespace srouter
             });
 
         constexpr std::array DefaultRPCBind{
+#ifdef _WIN32
+            // Windows has no unix-domain sockets, so a loopback TCP bind is the only option.
             Default{"tcp://127.0.0.1:1190"},
-#ifndef _WIN32
+#else
+            // Default to a local IPC socket only. It is created owner-only (see [api] rpc-group) and
+            // is not reachable from the network, unlike the previous tcp://127.0.0.1 default.
             Default{"ipc://rpc.sock"},
 #endif
         };
@@ -1288,6 +1292,46 @@ namespace srouter
             Comment{
                 "IP addresses and ports to bind to.",
                 "Recommend localhost-only for security purposes.",
+            });
+
+        conf.define_option<bool>(
+            "api",
+            "allow-insecure-rpc",
+            NotEmbedded,
+            Default{false},
+            assignment_acceptor(allow_insecure_rpc),
+            Comment{
+                "Permit binding the control RPC to a non-loopback TCP address, and grant admin access",
+                "over plain TCP connections. Left false the control RPC refuses non-loopback binds and",
+                "only the local IPC socket (or an explicitly configured curve client) may run admin",
+                "commands such as halt. Enable only if you understand the exposure.",
+            });
+
+        conf.define_option<std::string>(
+            "api",
+            "rpc-group",
+            NotEmbedded,
+            Default{""},
+            assignment_acceptor(rpc_group),
+            Comment{
+                "Optional unix group granted access to the IPC control socket. When set the socket is",
+                "created mode 0660 owned by this group; otherwise it is 0600 (owner only).",
+            });
+
+        conf.define_option<int>(
+            "api",
+            "rpc-max-request-size",
+            NotEmbedded,
+            Default{1024 * 1024},
+            [this](int arg) {
+                if (arg < 0)
+                    throw std::invalid_argument{"[api] rpc-max-request-size must be >= 0"};
+                rpc_max_request_size = arg;
+            },
+            Comment{
+                "Maximum size, in bytes, of a single control-RPC request (default 1 MiB). 0 removes",
+                "the limit. This bounds the dedicated RPC OMQ instance only; the oxend client keeps",
+                "the larger size it needs for the service-node list.",
             });
 
         // TODO: this was from pre-refactor:

@@ -125,7 +125,10 @@ namespace srouter
         // path to write our self signed rc to
         std::filesystem::path our_rc_file;
 
+        // OMQ instance for the oxend client (unlimited message size, service-node only).
         std::shared_ptr<oxenmq::OxenMQ> _omq{};
+        // Separate OMQ instance for the control RPC listener (bounded message size, minimal threads).
+        std::shared_ptr<oxenmq::OxenMQ> _rpc_omq{};
 
         std::atomic<bool> _is_stopping{false};
         std::atomic<bool> _is_running{false};

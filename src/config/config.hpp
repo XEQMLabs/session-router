@@ -262,6 +262,14 @@ namespace srouter
     {
         bool enable_rpc_server = false;
         std::vector<std::string> rpc_bind_addrs;
+        // Allow a non-loopback TCP control-RPC bind, and grant admin over plain TCP. Off by default:
+        // the control RPC is then reachable/controllable only via the local IPC socket or loopback.
+        bool allow_insecure_rpc = false;
+        // Optional unix group granted access to the IPC control socket (socket becomes 0660 + this
+        // group instead of 0600 owner-only).
+        std::string rpc_group;
+        // Upper bound on a single control-RPC request, in bytes (0 = leave the OMQ default).
+        int64_t rpc_max_request_size = 1 * 1024 * 1024;
 
         void define_config_options(ConfigDefinition& conf) override;
     };

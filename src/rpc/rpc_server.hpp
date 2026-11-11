@@ -28,6 +28,8 @@ namespace srouter
             using result_type = std::variant<oxenc::bt_value, nlohmann::json, std::string>;
             //  calls with incoming request data; returns response body or throws exception
             void (*invoke)(oxenmq::Message&, RPCServer&);
+            //  minimum auth level required; decides which OMQ category the command is registered in
+            oxenmq::AuthLevel auth_level = oxenmq::AuthLevel::admin;
         };
 
         //  RPC request registration
