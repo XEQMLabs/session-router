@@ -1,10 +1,10 @@
 # Security regression suite.
 #
-# The original llarp-era unit tests (test_llarp_*.cpp) were written against the pre-rewrite
-# lokinet/llarp codebase: they include <llarp/...> headers and link a `lokinet-amalgum` target,
-# neither of which exists in session-router.  They are left in the tree for reference but are not
-# built.  This target builds the current srouter:: regression cases instead, which link the real
-# component libraries and are meant to run under AddressSanitizer/UBSan.
+# The original llarp-era unit tests were written against the pre-rewrite lokinet/llarp codebase
+# (<llarp/...> headers, a `lokinet-amalgum` target) and no longer built after the rewrite into the
+# srouter:: namespace; they have been removed.  This target builds the current srouter:: regression
+# cases instead, which link the real component libraries and are meant to run under
+# AddressSanitizer/UBSan.
 
 add_executable(srouter-regress
   regress/main.cpp
