@@ -184,6 +184,11 @@ namespace srouter
 
         std::unordered_set<std::string> auth_static_tokens;
 
+        // [network]:tcp-tunnel-allow-ports: the only ports an inbound tunnelled TCP stream may be
+        // connected to on the local tun host. Empty (the default) denies all accepted inbound
+        // tunnel connections; it does not restrict outbound connections this node initiates.
+        std::unordered_set<uint16_t> tcp_tunnel_allow_ports;
+
         std::vector<std::filesystem::path> auth_files;
 
         std::vector<srouter::dns::SRVData> srv_records;

@@ -26,6 +26,11 @@ namespace srouter::util
     /// on error.
     void buffer_to_file(const std::filesystem::path& filename, std::string_view contents);
 
+    /// Like buffer_to_file, but for secrets (private keys): writes through a fresh 0600 temp file in
+    /// the same directory and renames it over the target, so the contents are never world-readable
+    /// and never written through a pre-existing symlink. Throws on error.
+    void buffer_to_private_file(const std::filesystem::path& filename, std::string_view contents);
+
     /// Extracts the filename as a std::string from a filename from a file.  On most platforms this is
     /// simply the same as path.string(), but that is non-portable (because of Windows) and so this
     /// gives you a version that works everywhere by extracting the utf8 representation (which

@@ -501,6 +501,22 @@ namespace srouter
             },
             [this](std::string arg) { auth_static_tokens.emplace(std::move(arg)); });
 
+        conf.define_option<uint16_t>(
+            "network",
+            "tcp-tunnel-allow-ports",
+            FullClientOnly,
+            MultiValue,
+            Comment{
+                "Allow inbound tunnelled TCP connections to reach this port on the local tun host.",
+                "Give once per allowed port; with none set, all inbound tunnelled connections are",
+                "refused (default-deny). Does not affect outbound connections this node initiates.",
+            },
+            [this](uint16_t arg) {
+                if (arg == 0)
+                    throw std::invalid_argument{"[network]:tcp-tunnel-allow-ports: port 0 is not a valid port"};
+                tcp_tunnel_allow_ports.insert(arg);
+            });
+
         conf.define_option<bool>(
             "network",
             "reachable",
