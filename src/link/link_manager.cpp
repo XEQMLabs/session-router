@@ -593,6 +593,12 @@ namespace srouter::link
             relay_find_cc.assign(sp.begin(), sp.end());
         }
 
+        if (lookup_index >= path::CC_PUBLISH_LOCATIONS)
+        {
+            log::warning(logcat, "Invalid find_cc request: lookup index {} is out of range", lookup_index);
+            return respond(messages::ERROR_RESPONSE);
+        }
+
         if (lookup_index >= 0)
         {
             auto& lookup_rid = closest_rids[lookup_index];
@@ -814,6 +820,12 @@ namespace srouter::link
         if (hop->terminal_hop)
         {
             auto payload_span = crypto::xchacha20_poly1305_decrypt_inplace(inner_payload, hop->shared_secret, nonce);
+            if (!payload_span)
+            {
+                log::warning(logcat, "Failed to decrypt path control message for terminal hop {}; dropping", hop_id);
+                m.respond(messages::ERROR_RESPONSE, true);
+                return;
+            }
             auto responder = [hop_weak = std::weak_ptr{hop}, msg = std::move(m), type](std::string response) {
                 auto hop = hop_weak.lock();
                 if (not hop)
@@ -1241,6 +1253,11 @@ namespace srouter::link
 
             // What's left in message after the above xchacha is back to what the data message
             // creator set up for us: [ENCRYPTED, SESSION_TAG, PIVOT_ID].
+            if (message.size() < sizeof(session_tag) + HopID::SIZE)
+            {
+                log::warning(logcat, "Dropping path data message too small to contain session tag and pivot id");
+                return;
+            }
 
             auto [payload, bsession_tag, bpivot_id] = split_span_tail<sizeof(session_tag), HopID::SIZE>(message);
 
