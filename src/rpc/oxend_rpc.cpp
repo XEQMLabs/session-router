@@ -56,6 +56,15 @@ namespace srouter::rpc
 
     void OxendRPC::handle_new_block(oxenmq::Message& msg)
     {
+        // Only accept block notifications over the oxend connection we opened. The "notify" category
+        // is registered with AuthLevel::none, so without this any OMQ peer that can reach this
+        // instance could force service-node-list refreshes.
+        if (not _conn or msg.conn != *_conn)
+        {
+            log::warning(logcat, "Ignoring notify.block from an unexpected connection");
+            return;
+        }
+
         if (msg.data.size() != 2)
         {
             log::error(
