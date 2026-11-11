@@ -219,6 +219,10 @@ namespace srouter
         log::trace(logcat, "Setting new source ({}) and destination ({}) IPs", src, dst);
 
         auto& hdr = header();
+        // IHL below 5 (20 bytes) is a malformed IPv4 header; the payload offset below would land
+        // inside the header. Refuse to touch it.
+        if (hdr.header_len < 5)
+            return;
         if (auto ihs = size_t(hdr.header_len * 4), sz = size(); ihs <= sz)
         {
             auto* payload = data() + ihs;
@@ -231,16 +235,20 @@ namespace srouter
                 case net::IPProtocol::TCP:
                     if (frag_off <= TCP_CSUM_OFF && payload_size >= TCP_CSUM_OFF - frag_off + 2)
                     {
-                        auto* tcp_hdr = reinterpret_cast<tcp_header*>(payload);
-                        tcp_hdr->checksum = update_ipv4_tcp_checksum(tcp_hdr->checksum, hdr.src, hdr.dest, src, dst);
+                        // The checksum field sits TCP_CSUM_OFF into the TCP header, i.e. at
+                        // TCP_CSUM_OFF - frag_off into this (possibly non-first) fragment. Writing
+                        // through a tcp_header* at payload+TCP_CSUM_OFF ignored frag_off and wrote
+                        // past the fragment; compute the offset instead, like the IPv6 helper.
+                        auto& check = *reinterpret_cast<uint16_t*>(payload + (TCP_CSUM_OFF - frag_off));
+                        check = update_ipv4_tcp_checksum(check, hdr.src, hdr.dest, src, dst);
                     }
                     break;
                 case net::IPProtocol::UDP:
                 case net::IPProtocol::UDP_LITE:  // UDP-Lite - same checksum place, same 0->0xFFff condition
-                    if (frag_off <= UDP_CSUM_OFF && payload_size >= UDP_CSUM_OFF + 2)
+                    if (frag_off <= UDP_CSUM_OFF && payload_size >= UDP_CSUM_OFF - frag_off + 2)
                     {
-                        auto* udp_hdr = reinterpret_cast<udp_header*>(payload);
-                        udp_hdr->checksum = update_ipv4_udp_checksum(udp_hdr->checksum, hdr.src, hdr.dest, src, dst);
+                        auto& check = *reinterpret_cast<uint16_t*>(payload + (UDP_CSUM_OFF - frag_off));
+                        check = update_ipv4_udp_checksum(check, hdr.src, hdr.dest, src, dst);
                     }
                     break;
                 default:
