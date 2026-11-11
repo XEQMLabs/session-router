@@ -50,9 +50,13 @@ namespace srouter
         // builds rpc_backend is null and these stay null (the relay/rpc paths never run).
         if (rpc_backend)
         {
-            _omq = rpc_backend->make_omq();
+            // The oxend client (relay only) runs on its own OMQ instance; the control RPC server
+            // gets a separate bounded instance, created in configure() when it is enabled.
             if (is_service_node)
+            {
+                _omq = rpc_backend->make_oxend_omq();
                 _router_testing = rpc_backend->make_reachability(*this);
+            }
         }
 
         init_logging();
@@ -473,11 +477,15 @@ namespace srouter
             if (_config.api.enable_rpc_server)
             {
                 log::debug(logcat, "Starting RPC server");
-                _rpc_server = rpc_backend->make_rpc_server(*this, *_omq);
+                _rpc_omq = rpc_backend->make_rpc_omq();
+                _rpc_server = rpc_backend->make_rpc_server(*this, *_rpc_omq);
             }
 
-            log::debug(logcat, "Starting OMQ server");
-            rpc_backend->start_omq(*_omq);
+            log::debug(logcat, "Starting OMQ server(s)");
+            if (_omq)
+                rpc_backend->start_omq(*_omq);
+            if (_rpc_omq)
+                rpc_backend->start_omq(*_rpc_omq);
 
             if (is_service_node)
             {
@@ -1035,6 +1043,7 @@ namespace srouter
             _is_running.store(false);
 
             _omq.reset();
+            _rpc_omq.reset();
 
             _close_promise.set_value();
             log::info(log_global, "Session Router has stopped");

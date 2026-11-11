@@ -37,6 +37,7 @@ namespace srouter::rpc
     struct Version : NoArgs, Immediate
     {
         static constexpr auto name = "version"sv;
+        static constexpr auto auth_level = oxenmq::AuthLevel::basic;
     };
 
     //  RPC: status
@@ -50,6 +51,7 @@ namespace srouter::rpc
     struct Status : NoArgs
     {
         static constexpr auto name = "status"sv;
+        static constexpr auto auth_level = oxenmq::AuthLevel::basic;
     };
 
     //  RPC: get_status
@@ -69,6 +71,7 @@ namespace srouter::rpc
     struct GetStatus : NoArgs
     {
         static constexpr auto name = "get_status"sv;
+        static constexpr auto auth_level = oxenmq::AuthLevel::basic;
     };
 
     //  RPC: quic_connect

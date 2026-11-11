@@ -82,14 +82,17 @@ namespace srouter::dns
         {
             log::debug(logcat, "Response too large!  Setting truncation bit");
 
-            oxenc::write_host_as_big(fields | flags_TC, tmp.data() + 2);
+            // uint16_t: `fields | flags_TC` promotes to int, and write_host_as_big writes
+            // sizeof(value) bytes, so without the cast this wrote 4 bytes, clobbering the flags and
+            // QDCOUNT fields (and, with a small buffer, past its end).
+            oxenc::write_host_as_big(uint16_t(fields | flags_TC), tmp.data() + 2);
 
             // Reset our buffer position back to just after the questions were added.  We do this
             // even if we aren't going to add EDNS stuff below, because we are not supposed to
             // include partial RR entries in a truncated reply.
             buf = std::span{tmp.data() + initial_len, tmp.size() - initial_len};
             // Replace the answers count with a 0:
-            oxenc::write_host_as_big(0, tmp.data() + 2 + 2 + 2);
+            oxenc::write_host_as_big(uint16_t{0}, tmp.data() + 2 + 2 + 2);
             buf_offset = initial_len;
 
             if (additional_edns)
@@ -105,7 +108,7 @@ namespace srouter::dns
                     buf = std::span{tmp.data() + initial_len, tmp.size() - initial_len};
                     buf_offset = initial_len;
                     // Replace the additional count with a 0:
-                    oxenc::write_host_as_big(0, tmp.data() + 2 + 2 + 2 + 2 + 2);
+                    oxenc::write_host_as_big(uint16_t{0}, tmp.data() + 2 + 2 + 2 + 2 + 2);
                 }
             }
         }
@@ -219,7 +222,10 @@ namespace srouter::dns
                     throw std::invalid_argument{"found invalid multiple additional OPT records"};
 
                 auto max_payload = static_cast<uint16_t>(a_rr->rr_class);
-                m.additional_edns.emplace(std::min<uint16_t>(max_payload, 1232), a_rr->ttl);
+                // RFC 6891: a requestor's UDP payload size below 512 is treated as 512. The floor
+                // also keeps the response buffer large enough for the fixed 12-byte header, so
+                // encode() cannot throw on a tiny advertised size.
+                m.additional_edns.emplace(std::clamp<uint16_t>(max_payload, 512, 1232), a_rr->ttl);
 
                 std::optional<std::vector<std::byte>> cookie;
                 for (auto optbuf = a_rr->rdata; !optbuf.empty();)
@@ -546,7 +552,8 @@ namespace srouter::dns
         {
             // We couldn't fit the entire reply, so we need to:
             // - set the TC (truncate) bit in the header flags
-            oxenc::write_host_as_big(hdr_fields | flags_TC, tmp.data() + 2);
+            // uint16_t: without the cast `hdr_fields | flags_TC` promotes to int and writes 4 bytes.
+            oxenc::write_host_as_big(uint16_t(hdr_fields | flags_TC), tmp.data() + 2);
 
             // - throw away any answers/authorities/additionals by backing up to the end of the
             //   question section.
