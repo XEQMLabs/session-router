@@ -391,8 +391,11 @@ namespace srouter
                     throw std::runtime_error{"[network]:mapaddr cannot be used with automatic IPv4 range selection"};
                 log::info(logcat, "Session Router IPv6 local network will be auto-selected");
 
-                if (!netconf._local_ipv6_net)
-                    netconf._local_ipv6_net.emplace().mask = 64;
+                // Normalize the autoselect placeholder to a fully-initialized ::/64 net.  The old
+                // `emplace().mask = 64` only ran when the optional was empty and left `ip`
+                // indeterminate; a `::` placeholder already present (ipv6_autoselect() is true for
+                // any :: address) kept an uninitialized mask.
+                netconf._local_ipv6_net = ipv6_net{ipv6{}, 64};
             }
             else
             {

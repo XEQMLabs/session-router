@@ -21,12 +21,15 @@ namespace srouter::handlers
       private:
         Router& _router;
 
-        /// our local ip network
+        /// our local ip network.  The range iterators are default-constructed and then assigned in
+        /// the constructor body, once the interface has auto-selected the real addresses; building
+        /// them here from the still-default nets would read an uninitialized mask (nondeterministic,
+        /// and UB in the ipv6 case, see libquic#37).
         ipv4_net _local_net;
-        IPv4RangeIterator _local_range_iterator{_local_net};
+        IPv4RangeIterator _local_range_iterator;
 
         ipv6_net _local_ipv6_net;
-        IPv6RangeIterator _local_ipv6_range_iterator{_local_ipv6_net};
+        IPv6RangeIterator _local_ipv6_range_iterator;
 
         /// list of strict connect addresses for hooks
         // std::vector<IpAddress> _strict_connect_addrs;
