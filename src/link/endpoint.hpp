@@ -210,6 +210,9 @@ namespace srouter::link
         // would become a parallel connection).
         int num_relay_conns(bool include_pending = false) const;
 
+        // Number of inbound client-to-relay edge connections currently held (relay only).
+        size_t num_inbound_clients() const;
+
         // If all current established outbound client-to-relay edge connections share the same
         // distinct IP range (according to the unique-hop-mask config setting) then this returns
         // that range.  If there are multiple ranges (or no established connections, or the unique

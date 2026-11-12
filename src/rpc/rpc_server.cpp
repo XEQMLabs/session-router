@@ -3,6 +3,8 @@
 #include "config/config.hpp"
 #include "constants/version.hpp"
 #include "contact/client_contact.hpp"
+#include "contact/contactdb.hpp"
+#include "link/link_manager.hpp"
 #include "router/router.hpp"
 #include "rpc/rpc_request_definitions.hpp"
 #include "rpc_request.hpp"
@@ -245,18 +247,35 @@ namespace srouter::rpc
         SetJSONResponse(result, version.response);
     }
 
+    // Builds a snapshot of the router's live resource counters.  These live on the router loop
+    // (path_ctx_stats() even asserts it), so this hops onto the loop to read a consistent snapshot;
+    // call_get blocks the calling RPC worker thread until the loop returns, and runs inline if we are
+    // already on the loop.  Shared by the `status` and `get_status` commands.
+    static nlohmann::json collect_status(Router& router)
+    {
+        return router._jq->call_get([&router]() -> nlohmann::json {
+            auto [n_paths, n_transit] = router.path_context.path_ctx_stats();
+            auto& endpoint = router.link_manager().endpoint;
+            return {
+                {"num_client_contacts", router.contact_db().num_ccs()},
+                {"num_paths", n_paths},
+                {"num_transit_paths", n_transit},
+                {"num_inbound_clients", endpoint.num_inbound_clients()},
+                {"num_relay_conns", endpoint.num_relay_conns()},
+            };
+        });
+    }
+
     void RPCServer::invoke(Status& status)
     {
         log_print_rpc(status);
-
-        // TODO: this
+        SetJSONResponse(collect_status(_router), status.response);
     }
 
     void RPCServer::invoke(GetStatus& getstatus)
     {
         log_print_rpc(getstatus);
-
-        // TODO: this
+        SetJSONResponse(collect_status(_router), getstatus.response);
     }
 
     void RPCServer::invoke(QuicConnect& quicconnect)

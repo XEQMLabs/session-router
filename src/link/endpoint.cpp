@@ -756,6 +756,11 @@ namespace srouter::link
         }
     }
 
+    size_t Endpoint::num_inbound_clients() const
+    {
+        return router._jq->call_get([this] { return inbound_clients.size(); });
+    }
+
     void Endpoint::on_outbound_conn(std::shared_ptr<quic::Connection> qconn)
     {
         assert(qconn->remote_key().size() == RouterID::SIZE);
