@@ -102,8 +102,10 @@ namespace srouter::path
     inline constexpr std::size_t MAX_STORED_CCS{65'536};
 
     /// Maximum size, in bytes, of a single stored encrypted client-contact record.  A genuine
-    /// record is well under this; the cap bounds a single oversized-record abuse.
-    inline constexpr std::size_t MAX_CC_RECORD_SIZE{8192};
+    /// record is several times smaller than this; the cap bounds a single oversized-record abuse and,
+    /// together with MAX_STORED_CCS, bounds ContactDB's worst-case memory (count * record) to a
+    /// budgeted ceiling.
+    inline constexpr std::size_t MAX_CC_RECORD_SIZE{4096};
 
     /// Maximum number of concurrent transit paths a relay will carry.  _transit_hops holds two
     /// entries (rx + tx) per hop, so the underlying map is bounded at twice this value.
