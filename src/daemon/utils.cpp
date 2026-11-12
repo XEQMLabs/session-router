@@ -24,7 +24,7 @@ namespace srouter::controller
         if (auto it = _binds.find(src); it != _binds.end())
             _omq->request(
                 it->second.cid,
-                "srouter.session_init",
+                "admin.session_init",
                 [&](bool success, std::vector<std::string> data) {
                     if (success)
                     {
@@ -73,7 +73,7 @@ namespace srouter::controller
         if (auto it = _binds.find(src); it != _binds.end())
             _omq->request(
                 it->second.cid,
-                "srouter.session_close",
+                "admin.session_close",
                 [&](bool success, std::vector<std::string> data) {
                     if (success)
                     {
@@ -95,7 +95,7 @@ namespace srouter::controller
 
         if (auto it = _binds.find(src); it != _binds.end())
         {
-            _omq->request(it->second.cid, "srouter.halt", [&](bool success, std::vector<std::string> data) {
+            _omq->request(it->second.cid, "admin.halt", [&](bool success, std::vector<std::string> data) {
                 if (success)
                 {
                     auto res = nlohmann::json::parse(data[0]);

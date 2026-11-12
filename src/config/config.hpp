@@ -67,6 +67,13 @@ namespace srouter
 
         std::optional<quic::Address> public_addr;
 
+        // F11.2: relay resource caps.  Hard ceilings on remote-driven growth, defaulting to the
+        // conservative values in constants/path.hpp; operators can override them per host under
+        // [router].  Not steady-state targets: normal operation stays far below them.
+        size_t max_stored_client_contacts = path::MAX_STORED_CCS;
+        size_t max_transit_paths = path::MAX_TRANSIT_HOPS;
+        size_t max_inbound_client_conns = path::MAX_INBOUND_CLIENTS;
+
         void define_config_options(ConfigDefinition& conf) override;
     };
 
@@ -184,6 +191,11 @@ namespace srouter
 
         std::unordered_set<std::string> auth_static_tokens;
 
+        // [network]:tcp-tunnel-allow-ports: the only ports an inbound tunnelled TCP stream may be
+        // connected to on the local tun host. Empty (the default) denies all accepted inbound
+        // tunnel connections; it does not restrict outbound connections this node initiates.
+        std::unordered_set<uint16_t> tcp_tunnel_allow_ports;
+
         std::vector<std::filesystem::path> auth_files;
 
         std::vector<srouter::dns::SRVData> srv_records;
@@ -257,6 +269,14 @@ namespace srouter
     {
         bool enable_rpc_server = false;
         std::vector<std::string> rpc_bind_addrs;
+        // Allow a non-loopback TCP control-RPC bind, and grant admin over plain TCP. Off by default:
+        // the control RPC is then reachable/controllable only via the local IPC socket or loopback.
+        bool allow_insecure_rpc = false;
+        // Optional unix group granted access to the IPC control socket (socket becomes 0660 + this
+        // group instead of 0600 owner-only).
+        std::string rpc_group;
+        // Upper bound on a single control-RPC request, in bytes (0 = leave the OMQ default).
+        int64_t rpc_max_request_size = 1 * 1024 * 1024;
 
         void define_config_options(ConfigDefinition& conf) override;
     };
