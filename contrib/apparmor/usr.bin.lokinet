@@ -1,7 +1,7 @@
 # Last Modified: Fri 05 Feb 2021 08:13:58 PM UTC
 #include <tunables/global>
 
-profile session_router /usr/bin/session_router {
+profile session-router /usr/bin/session-router {
   #include <abstractions/base>
   #include <abstractions/nameservice>
 

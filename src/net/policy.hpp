@@ -32,6 +32,12 @@ namespace srouter
                               // cannot accept one.  Redefining it would make every 1.0.x embedded
                               // client look like an acceptor.  Bit 0 (1.0.x EXIT) is likewise in use
                               // in the wild.
+        INIT_V2 = 1 << 6,     // This endpoint understands session-init v2: a signed, confidential
+                              // auth token carried in the init (so non-public exits/services can be
+                              // gated) and a signed timestamp + nonce with replay protection.  An
+                              // initiator that sees this flag on the target's ClientContact includes
+                              // the v2 fields; the target enforces them only for peers it advertised
+                              // the flag to, so there is no flag day.  (Bit 7 remains free.)
     };
     inline constexpr protocol_flag operator&(protocol_flag a, protocol_flag b)
     {

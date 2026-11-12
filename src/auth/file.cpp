@@ -3,6 +3,8 @@
 #include "router/router.hpp"
 #include "util/str.hpp"
 
+#include <sodium/utils.h>
+
 namespace srouter::auth
 {
     AuthResult FileAuthPolicy::check_files(const AuthInfo& info) const
@@ -15,10 +17,12 @@ namespace srouter::auth
             {
                 // split off comments
                 const auto parts = split_any(line, "#;", true);
-                if (auto part = parts[0]; not parts.empty() and not parts[0].empty())
+                // Check emptiness before indexing parts[0]: split_any can return an empty vector, so
+                // the previous `auto part = parts[0]` read out of bounds on a blank line.
+                if (not parts.empty() and not parts[0].empty())
                 {
                     // split off whitespaces and check password
-                    if (check_passwd(std::string{TrimWhitespace(part)}, info.token))
+                    if (check_passwd(std::string{TrimWhitespace(parts[0])}, info.token))
                         return AuthResult{AuthCode::ACCEPTED, "accepted by whitelist"};
                 }
             }
@@ -31,7 +35,10 @@ namespace srouter::auth
         switch (_type)
         {
             case AuthFileType::PLAIN:
-                return hash == challenge;
+                // Constant-time compare so a plaintext token cannot be recovered byte-by-byte from
+                // response timing.
+                return hash.size() == challenge.size()
+                    && sodium_memcmp(hash.data(), challenge.data(), hash.size()) == 0;
             case AuthFileType::HASHES:
                 return crypto::check_passwd_hash(std::move(hash), std::move(challenge));
         }
