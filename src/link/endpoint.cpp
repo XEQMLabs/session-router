@@ -687,7 +687,7 @@ namespace srouter::link
         }
 
         if (alpn != BOOTSTRAP_ALPN)
-            manager.register_commands(*control_stream, remote);
+            manager.register_commands(*control_stream, remote, alpn);
 
         return control_stream;
     }
@@ -737,11 +737,28 @@ namespace srouter::link
         }
         else
         {
-            // We are a service node, and so we use this container to holds client connections to us:
+            // We are a service node, and so we use this container to holds client connections to us.
+            // F11.2: bound how many inbound client connections we hold at once.  At the cap we drop
+            // the new connection (letting the shared_ptr release it) rather than displacing an
+            // existing one.
+            if (const auto cap = router.config().router.max_inbound_client_conns; inbound_clients.size() >= cap)
+            {
+                log::warning(
+                    logcat,
+                    "Refusing inbound client connection from {}: at capacity ({})",
+                    conn->conn->remote(),
+                    cap);
+                return;
+            }
             log::debug(logcat, "New incoming client connection from {}", conn->conn->remote());
             auto& cid = conn->conn->reference_id();
             inbound_clients.emplace(cid, std::move(conn));
         }
+    }
+
+    size_t Endpoint::num_inbound_clients() const
+    {
+        return router._jq->call_get([this] { return inbound_clients.size(); });
     }
 
     void Endpoint::on_outbound_conn(std::shared_ptr<quic::Connection> qconn)

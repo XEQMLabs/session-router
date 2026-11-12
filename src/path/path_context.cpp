@@ -11,7 +11,16 @@ namespace srouter::path
 
     void PathContext::allow_transit() { _allow_transit = true; }
 
+    void PathContext::reject_transit() { _allow_transit = false; }
+
     bool PathContext::is_transit_allowed() const { return _allow_transit; }
+
+    size_t PathContext::num_transit_hops() const
+    {
+        assert(_r.loop().inside());
+        // Two entries (rx + tx) are stored per hop.
+        return _transit_hops.size() / 2;
+    }
 
     void PathContext::add_path(std::shared_ptr<Path> path) { _path_map.emplace(path->edge().rxid, std::move(path)); }
 

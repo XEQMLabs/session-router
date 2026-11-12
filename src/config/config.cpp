@@ -155,6 +155,46 @@ namespace srouter
         // Hidden option because this isn't something that should ever be turned off occasionally
         // when doing dev/testing work.
         conf.define_option<bool>("router", "block-bogons", Default{true}, Hidden, assignment_acceptor(block_bogons));
+
+        // F11.2: relay resource caps.  Each is a hard ceiling on remote-driven growth; the defaults
+        // (from constants/path.hpp) are conservative and bound only pathological abuse, while a large
+        // relay can raise them and a small host can lower them.  The lower bounds keep a relay from
+        // being accidentally configured so low it cannot do its job.
+        conf.define_option<size_t>(
+            "router",
+            "max-stored-client-contacts",
+            RelayOnly,
+            Default{path::MAX_STORED_CCS},
+            Comment{
+                "Maximum number of blinded client-contact records this relay will store at once.  At",
+                "the cap the relay refuses a new (previously unseen) record rather than evicting a",
+                "valid one.  Each record is at most a few KiB.",
+            },
+            lower_bounded_assignment_acceptor(
+                max_stored_client_contacts, size_t{1024}, "[router]:max-stored-client-contacts"));
+
+        conf.define_option<size_t>(
+            "router",
+            "max-transit-paths",
+            RelayOnly,
+            Default{path::MAX_TRANSIT_HOPS},
+            Comment{
+                "Maximum number of concurrent transit paths this relay will carry.  Path builds beyond",
+                "this are rejected until existing transit paths expire.",
+            },
+            lower_bounded_assignment_acceptor(max_transit_paths, size_t{256}, "[router]:max-transit-paths"));
+
+        conf.define_option<size_t>(
+            "router",
+            "max-inbound-client-connections",
+            RelayOnly,
+            Default{path::MAX_INBOUND_CLIENTS},
+            Comment{
+                "Maximum number of simultaneous inbound client connections this relay will hold open.",
+                "Additional inbound client connections are dropped while at the cap.",
+            },
+            lower_bounded_assignment_acceptor(
+                max_inbound_client_conns, size_t{128}, "[router]:max-inbound-client-connections"));
     }
 
     void ExitConfig::define_config_options(ConfigDefinition& conf)
@@ -500,6 +540,22 @@ namespace srouter
                 "Can be provided multiple times",
             },
             [this](std::string arg) { auth_static_tokens.emplace(std::move(arg)); });
+
+        conf.define_option<uint16_t>(
+            "network",
+            "tcp-tunnel-allow-ports",
+            FullClientOnly,
+            MultiValue,
+            Comment{
+                "Allow inbound tunnelled TCP connections to reach this port on the local tun host.",
+                "Give once per allowed port; with none set, all inbound tunnelled connections are",
+                "refused (default-deny). Does not affect outbound connections this node initiates.",
+            },
+            [this](uint16_t arg) {
+                if (arg == 0)
+                    throw std::invalid_argument{"[network]:tcp-tunnel-allow-ports: port 0 is not a valid port"};
+                tcp_tunnel_allow_ports.insert(arg);
+            });
 
         conf.define_option<bool>(
             "network",
@@ -1234,8 +1290,12 @@ namespace srouter
             });
 
         constexpr std::array DefaultRPCBind{
+#ifdef _WIN32
+            // Windows has no unix-domain sockets, so a loopback TCP bind is the only option.
             Default{"tcp://127.0.0.1:1190"},
-#ifndef _WIN32
+#else
+            // Default to a local IPC socket only. It is created owner-only (see [api] rpc-group) and
+            // is not reachable from the network, unlike the previous tcp://127.0.0.1 default.
             Default{"ipc://rpc.sock"},
 #endif
         };
@@ -1272,6 +1332,46 @@ namespace srouter
             Comment{
                 "IP addresses and ports to bind to.",
                 "Recommend localhost-only for security purposes.",
+            });
+
+        conf.define_option<bool>(
+            "api",
+            "allow-insecure-rpc",
+            NotEmbedded,
+            Default{false},
+            assignment_acceptor(allow_insecure_rpc),
+            Comment{
+                "Permit binding the control RPC to a non-loopback TCP address, and grant admin access",
+                "over plain TCP connections. Left false the control RPC refuses non-loopback binds and",
+                "only the local IPC socket (or an explicitly configured curve client) may run admin",
+                "commands such as halt. Enable only if you understand the exposure.",
+            });
+
+        conf.define_option<std::string>(
+            "api",
+            "rpc-group",
+            NotEmbedded,
+            Default{""},
+            assignment_acceptor(rpc_group),
+            Comment{
+                "Optional unix group granted access to the IPC control socket. When set the socket is",
+                "created mode 0660 owned by this group; otherwise it is 0600 (owner only).",
+            });
+
+        conf.define_option<int>(
+            "api",
+            "rpc-max-request-size",
+            NotEmbedded,
+            Default{1024 * 1024},
+            [this](int arg) {
+                if (arg < 0)
+                    throw std::invalid_argument{"[api] rpc-max-request-size must be >= 0"};
+                rpc_max_request_size = arg;
+            },
+            Comment{
+                "Maximum size, in bytes, of a single control-RPC request (default 1 MiB). 0 removes",
+                "the limit. This bounds the dedicated RPC OMQ instance only; the oxend client keeps",
+                "the larger size it needs for the service-node list.",
             });
 
         // TODO: this was from pre-refactor:
