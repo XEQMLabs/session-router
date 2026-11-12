@@ -89,11 +89,11 @@ namespace srouter
             // evicting a valid entry (evicting by key proximity is the grind this guards against).
             // Done before signature verification so a key grinder can't make us verify signatures for
             // records we will not keep.
-            if (ins && _storage.size() > path::MAX_STORED_CCS)
+            if (const auto cap = _router.config().router.max_stored_client_contacts;
+                ins && _storage.size() > cap)
             {
                 _storage.erase(it);
-                log::warning(
-                    logcat, "ContactDB at capacity ({}); refusing new client contact", path::MAX_STORED_CCS);
+                log::warning(logcat, "ContactDB at capacity ({}); refusing new client contact", cap);
                 return false;
             }
 

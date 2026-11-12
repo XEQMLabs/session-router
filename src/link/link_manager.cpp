@@ -785,9 +785,9 @@ namespace srouter::link
                 throw path::TransitHopError::HOP_ID_UNAVAILABLE();
 
             // F11.2: bound the number of concurrent transit paths we carry.
-            if (router.path_context.num_transit_hops() >= path::MAX_TRANSIT_HOPS)
+            if (const auto cap = router.config().router.max_transit_paths; router.path_context.num_transit_hops() >= cap)
             {
-                log::info(logcat, "Refusing path build: at transit capacity ({})", path::MAX_TRANSIT_HOPS);
+                log::info(logcat, "Refusing path build: at transit capacity ({})", cap);
                 throw path::TransitHopError::NO_TRANSIT_CAPACITY();
             }
 

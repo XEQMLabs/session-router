@@ -67,6 +67,13 @@ namespace srouter
 
         std::optional<quic::Address> public_addr;
 
+        // F11.2: relay resource caps.  Hard ceilings on remote-driven growth, defaulting to the
+        // conservative values in constants/path.hpp; operators can override them per host under
+        // [router].  Not steady-state targets: normal operation stays far below them.
+        size_t max_stored_client_contacts = path::MAX_STORED_CCS;
+        size_t max_transit_paths = path::MAX_TRANSIT_HOPS;
+        size_t max_inbound_client_conns = path::MAX_INBOUND_CLIENTS;
+
         void define_config_options(ConfigDefinition& conf) override;
     };
 

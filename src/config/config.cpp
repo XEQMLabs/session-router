@@ -155,6 +155,46 @@ namespace srouter
         // Hidden option because this isn't something that should ever be turned off occasionally
         // when doing dev/testing work.
         conf.define_option<bool>("router", "block-bogons", Default{true}, Hidden, assignment_acceptor(block_bogons));
+
+        // F11.2: relay resource caps.  Each is a hard ceiling on remote-driven growth; the defaults
+        // (from constants/path.hpp) are conservative and bound only pathological abuse, while a large
+        // relay can raise them and a small host can lower them.  The lower bounds keep a relay from
+        // being accidentally configured so low it cannot do its job.
+        conf.define_option<size_t>(
+            "router",
+            "max-stored-client-contacts",
+            RelayOnly,
+            Default{path::MAX_STORED_CCS},
+            Comment{
+                "Maximum number of blinded client-contact records this relay will store at once.  At",
+                "the cap the relay refuses a new (previously unseen) record rather than evicting a",
+                "valid one.  Each record is at most a few KiB.",
+            },
+            lower_bounded_assignment_acceptor(
+                max_stored_client_contacts, size_t{1024}, "[router]:max-stored-client-contacts"));
+
+        conf.define_option<size_t>(
+            "router",
+            "max-transit-paths",
+            RelayOnly,
+            Default{path::MAX_TRANSIT_HOPS},
+            Comment{
+                "Maximum number of concurrent transit paths this relay will carry.  Path builds beyond",
+                "this are rejected until existing transit paths expire.",
+            },
+            lower_bounded_assignment_acceptor(max_transit_paths, size_t{256}, "[router]:max-transit-paths"));
+
+        conf.define_option<size_t>(
+            "router",
+            "max-inbound-client-connections",
+            RelayOnly,
+            Default{path::MAX_INBOUND_CLIENTS},
+            Comment{
+                "Maximum number of simultaneous inbound client connections this relay will hold open.",
+                "Additional inbound client connections are dropped while at the cap.",
+            },
+            lower_bounded_assignment_acceptor(
+                max_inbound_client_conns, size_t{128}, "[router]:max-inbound-client-connections"));
     }
 
     void ExitConfig::define_config_options(ConfigDefinition& conf)

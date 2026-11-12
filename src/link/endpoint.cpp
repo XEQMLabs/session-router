@@ -741,13 +741,13 @@ namespace srouter::link
             // F11.2: bound how many inbound client connections we hold at once.  At the cap we drop
             // the new connection (letting the shared_ptr release it) rather than displacing an
             // existing one.
-            if (inbound_clients.size() >= path::MAX_INBOUND_CLIENTS)
+            if (const auto cap = router.config().router.max_inbound_client_conns; inbound_clients.size() >= cap)
             {
                 log::warning(
                     logcat,
                     "Refusing inbound client connection from {}: at capacity ({})",
                     conn->conn->remote(),
-                    path::MAX_INBOUND_CLIENTS);
+                    cap);
                 return;
             }
             log::debug(logcat, "New incoming client connection from {}", conn->conn->remote());

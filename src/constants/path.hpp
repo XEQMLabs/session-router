@@ -91,9 +91,10 @@ namespace srouter::path
 
     // F11: relay resource caps.  Each is a hard ceiling on remote-driven growth, not a steady-state
     // target: normal operation stays far below these, and they exist only to bound memory/CPU abuse
-    // from a hostile peer.  The three store caps are deliberately generous; they are intended to
-    // become operator-tunable [router] overrides once sized against real fleet footprint (see the
-    // review's open decision #4), and live here as constants until then.
+    // from a hostile peer.  The three store caps below are the *defaults* for the operator-tunable
+    // [router] overrides (max-stored-client-contacts, max-transit-paths,
+    // max-inbound-client-connections); a relay reads the configured value, falling back to these.
+    // They are deliberately generous and should be re-tuned against real fleet footprint.
 
     /// Maximum number of distinct blinded client-contact records a relay will store.  At the cap a
     /// relay refuses a new (previously unseen) blinded key rather than evicting a valid entry:
