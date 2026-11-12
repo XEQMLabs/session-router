@@ -32,6 +32,7 @@
 #include <cstddef>
 #include <exception>
 #include <ranges>
+#include <type_traits>
 #include <variant>
 
 namespace srouter::link
@@ -62,10 +63,13 @@ namespace srouter::link
         (this->*handler)(body_str, resp, true);
     }
 
-    void Manager::register_commands(quic::BTRequestStream& s, const std::variant<RouterID, quic::ConnectionID>& remote)
+    void Manager::register_commands(
+        quic::BTRequestStream& s, const std::variant<RouterID, quic::ConnectionID>& remote, std::string_view alpn)
     {
         log::trace(logcat, "{} called", __PRETTY_FUNCTION__);
 
+        // Available on every connection (client or relay): paths and sessions are the client-facing
+        // control surface.
         s.register_handler("path_control"s, [this](quic::message m) {
             router._jq->call([this, msg = std::move(m)]() mutable { handle_path_control(std::move(msg)); });
         });
@@ -80,10 +84,26 @@ namespace srouter::link
             return;
         }
 
+        // path_build stays on every ALPN we accept as a relay: a client legitimately sends path_build
+        // to its entry relay.  Its abuse is bounded by is_transit_allowed() + the transit cap + the
+        // per-source token bucket (F11.3/F11.4), not by the ALPN.
         s.register_handler("path_build"s, [this, remote](quic::message m) {
             router._jq->call(
                 [this, remote, msg = std::move(m)]() mutable { handle_path_build(std::move(msg), remote); });
         });
+
+        // F11.1: the relay-to-relay direct commands run with relay semantics (handle_direct_request
+        // passes source_is_relay=true) and must only be reachable from a registered relay.  The
+        // RELAY_ALPN key-verify callback already rejects any peer whose RouterID is not a registered
+        // service node (endpoint.cpp), and clients reach publish_cc/find_cc/fetch_rcs over paths
+        // (handle_path_*), never these direct commands.  Registering them only on a RELAY_ALPN
+        // connection keeps a client-ALPN control stream from invoking them at all, which makes the
+        // hardcoded source_is_relay=true correct by construction.
+        if (alpn != RELAY_ALPN)
+        {
+            log::trace(logcat, "Registered client-facing relay BTStream commands (no relay-to-relay direct commands)");
+            return;
+        }
 
         s.register_handler("fetch_rcs"s, [this](quic::message m) {
             router._jq->call([this, msg = std::move(m)]() mutable {
@@ -209,14 +229,30 @@ namespace srouter::link
 
         rcs.reserve(src.size());
         auto now = srouter::time_now_ms();
+        // F11.5: alongside the RC list, compute a cheap version token (count + newest timestamp) of
+        // the known-RC set so we can reuse a previously compressed blob instead of recompressing the
+        // whole set on every request.
+        std::chrono::sys_seconds newest{};
         for (const auto& rc : std::views::values(src))
             if (not rc.is_expired(now))
+            {
                 rcs.push_back(rc.view());
+                newest = std::max(newest, rc.timestamp());
+            }
         rcs.push_back("e"sv);
 
         if (rcs.size() == 2)
         {
             m.respond("No RCs", true);
+            return;
+        }
+
+        const size_t count = rcs.size() - 2;  // minus the "l"/"e" list delimiters
+        if (not _bootstrap_rc_cache.empty() && count == _bootstrap_rc_cache_count
+            && newest == _bootstrap_rc_cache_newest)
+        {
+            log::debug(logcat, "Serving cached bootstrap RC blob ({} RCs)", count);
+            m.respond(std::span<const std::byte>{_bootstrap_rc_cache});
             return;
         }
 
@@ -266,7 +302,13 @@ namespace srouter::link
         // Response dict terminator:
         response_raw.push_back(std::byte{'e'});
 
-        m.respond(std::span{response_raw.data() + skip, response_raw.size() - skip});
+        // F11.5: cache the exact bytes we send, keyed by the version token computed above, so an
+        // unchanged RC set is served without recompressing.
+        _bootstrap_rc_cache.assign(response_raw.begin() + skip, response_raw.end());
+        _bootstrap_rc_cache_count = count;
+        _bootstrap_rc_cache_newest = newest;
+
+        m.respond(std::span<const std::byte>{_bootstrap_rc_cache});
     }
 
     void Manager::handle_fetch_rcs(
@@ -677,6 +719,43 @@ namespace srouter::link
             return m.respond(messages::ERROR_RESPONSE, true);
         }
 
+        // F11.4: honour the transit gate.  It is set for relays at startup (and can be revoked to
+        // stop accepting new transit); before this it had no call sites, so the gate was dead.
+        if (not router.path_context.is_transit_allowed())
+        {
+            log::info(logcat, "Refusing path build: transit not currently allowed");
+            return m.respond(messages::serialize_status_response("TRANSIT NOT ALLOWED"sv), true);
+        }
+
+        auto now = srouter::time_now_ms();
+
+        // F11.3: throttle path builds per source (relay RouterID or client ConnectionID) to bound
+        // the per-hop crypto and allocation work a single peer can force us to do.
+        {
+            auto key = std::visit(
+                [](const auto& x) -> std::string {
+                    using T = std::decay_t<decltype(x)>;
+                    if constexpr (std::is_same_v<T, RouterID>)
+                        return std::string{x.to_view()};
+                    else
+                        return x.to_string();
+                },
+                from);
+
+            if (_path_build_buckets.size() > path::PATH_BUILD_BUCKET_PRUNE_AT)
+                std::erase_if(_path_build_buckets, [now](const auto& kv) { return kv.second.full(now); });
+
+            auto& bucket = _path_build_buckets
+                               .try_emplace(
+                                   std::move(key), path::PATH_BUILD_BUCKET_RATE, path::PATH_BUILD_BUCKET_BURST, now)
+                               .first->second;
+            if (not bucket.try_spend(now))
+            {
+                log::info(logcat, "Rate-limiting path build from source");
+                return m.respond(messages::serialize_status_response("RATE LIMITED"sv), true);
+            }
+        }
+
         try
         {
             auto frames_in = m.body<std::byte>();
@@ -696,7 +775,6 @@ namespace srouter::link
                 return;
             }
 
-            auto now = srouter::time_now_ms();
             auto [hop, onion_nonce] =
                 path::PathHandler::decrypt_build_frame(frames_in.first(frame_size), router, from, now);
 
@@ -705,6 +783,13 @@ namespace srouter::link
 
             if (router.path_context.has_transit_hop(hop->rxid) || router.path_context.has_transit_hop(hop->txid))
                 throw path::TransitHopError::HOP_ID_UNAVAILABLE();
+
+            // F11.2: bound the number of concurrent transit paths we carry.
+            if (router.path_context.num_transit_hops() >= path::MAX_TRANSIT_HOPS)
+            {
+                log::info(logcat, "Refusing path build: at transit capacity ({})", path::MAX_TRANSIT_HOPS);
+                throw path::TransitHopError::NO_TRANSIT_CAPACITY();
+            }
 
             // we are terminal hop and everything is okay
             if (hop->terminal_hop)

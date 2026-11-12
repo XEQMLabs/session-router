@@ -10,6 +10,7 @@ add_executable(srouter-regress
   regress/main.cpp
   regress/test_zstd.cpp
   regress/test_file_perms.cpp
+  regress/test_relay_caps.cpp
 )
 # The regress sources plus src/ for the component headers ("util/...", "config/...", "rpc/...").
 # src/ is a component library's PUBLIC include, but the full aggregate below does not re-export it,

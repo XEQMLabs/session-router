@@ -55,6 +55,17 @@ namespace srouter
         auto& [payload, signed_at] = value;
         PubKey blinded_pk;
 
+        // F11.2: bound a single record's size before we spend anything parsing it.
+        if (payload.size() > path::MAX_CC_RECORD_SIZE)
+        {
+            log::warning(
+                logcat,
+                "Refusing oversized encrypted client contact ({} > {} bytes)",
+                payload.size(),
+                path::MAX_CC_RECORD_SIZE);
+            return false;
+        }
+
         auto it = _storage.end();
         bool ins = false;
 
@@ -73,6 +84,19 @@ namespace srouter
             // below if this is a stale record, and otherwise fill in the stub if everything checks
             // out.
             std::tie(it, ins) = _storage.try_emplace(blinded_pk);
+
+            // F11.2: if this is a brand-new blinded key and the table is full, refuse it rather than
+            // evicting a valid entry (evicting by key proximity is the grind this guards against).
+            // Done before signature verification so a key grinder can't make us verify signatures for
+            // records we will not keep.
+            if (ins && _storage.size() > path::MAX_STORED_CCS)
+            {
+                _storage.erase(it);
+                log::warning(
+                    logcat, "ContactDB at capacity ({}); refusing new client contact", path::MAX_STORED_CCS);
+                return false;
+            }
+
             if (!ins && it->second.second >= signed_at)
                 // We already have a verified entry with a newer signed at, then just drop this one.
                 return false;

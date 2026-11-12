@@ -89,4 +89,34 @@ namespace srouter::path
     /// how big transit hop traffic queues are
     inline constexpr std::size_t TRANSIT_HOP_QUEUE_SIZE{256};
 
+    // F11: relay resource caps.  Each is a hard ceiling on remote-driven growth, not a steady-state
+    // target: normal operation stays far below these, and they exist only to bound memory/CPU abuse
+    // from a hostile peer.  The three store caps are deliberately generous; they are intended to
+    // become operator-tunable [router] overrides once sized against real fleet footprint (see the
+    // review's open decision #4), and live here as constants until then.
+
+    /// Maximum number of distinct blinded client-contact records a relay will store.  At the cap a
+    /// relay refuses a new (previously unseen) blinded key rather than evicting a valid entry:
+    /// evicting by key proximity is exactly the grind this guards against.
+    inline constexpr std::size_t MAX_STORED_CCS{65'536};
+
+    /// Maximum size, in bytes, of a single stored encrypted client-contact record.  A genuine
+    /// record is well under this; the cap bounds a single oversized-record abuse.
+    inline constexpr std::size_t MAX_CC_RECORD_SIZE{8192};
+
+    /// Maximum number of concurrent transit paths a relay will carry.  _transit_hops holds two
+    /// entries (rx + tx) per hop, so the underlying map is bounded at twice this value.
+    inline constexpr std::size_t MAX_TRANSIT_HOPS{16'384};
+
+    /// Maximum number of simultaneous inbound client connections a relay will hold open.
+    inline constexpr std::size_t MAX_INBOUND_CLIENTS{8192};
+
+    /// F11.3 per-source token bucket in front of path builds: sustained builds/second and the
+    /// instantaneous burst ceiling a single source may accumulate.
+    inline constexpr double PATH_BUILD_BUCKET_RATE{20.0};
+    inline constexpr double PATH_BUILD_BUCKET_BURST{60.0};
+
+    /// Prune the per-source path-build bucket map (drop full/idle buckets) once it grows past this.
+    inline constexpr std::size_t PATH_BUILD_BUCKET_PRUNE_AT{1024};
+
 }  // namespace srouter::path
