@@ -20,12 +20,25 @@ namespace srouter::full
 
     namespace
     {
-        std::shared_ptr<oxenmq::OxenMQ> make_omq()
+        std::shared_ptr<oxenmq::OxenMQ> make_oxend_omq()
         {
             auto omq = std::make_shared<oxenmq::OxenMQ>();
             // Raise the max message size (no limit) so that syncing the registered relay list from
-            // oxend -- which can exceed the default 1MB -- doesn't get the connection closed.
+            // oxend -- which can exceed the default 1MB -- doesn't get the connection closed. This
+            // instance talks only to oxend, never to the untrusted control-RPC surface.
             omq->MAX_MSG_SIZE = -1;
+            return omq;
+        }
+
+        std::shared_ptr<oxenmq::OxenMQ> make_rpc_omq()
+        {
+            auto omq = std::make_shared<oxenmq::OxenMQ>();
+            // Dedicated instance for the control RPC listener. It keeps a bounded MAX_MSG_SIZE (set
+            // from config by the RPC server before start) and a minimal thread footprint, since the
+            // control surface is low-traffic.
+            omq->set_general_threads(1);
+            omq->set_batch_threads(1);
+            omq->set_reply_threads(1);
             return omq;
         }
 
@@ -84,7 +97,8 @@ namespace srouter::full
         }
 
         const RpcBackendHooks hooks{
-            .make_omq = &make_omq,
+            .make_oxend_omq = &make_oxend_omq,
+            .make_rpc_omq = &make_rpc_omq,
             .start_omq = &start_omq,
             .make_oxend = &make_oxend,
             .make_rpc_server = &make_rpc_server,

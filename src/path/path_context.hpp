@@ -43,6 +43,9 @@ namespace srouter::path
 
         void put_transit_hop(std::shared_ptr<TransitHop> hop);
 
+        // Number of transit paths currently carried (counts each rx/tx pair once).
+        size_t num_transit_hops() const;
+
         Path* get_path(const HopID& hop_id) const;
 
         TransitHop* get_transit_hop(const HopID&) const;
