@@ -25,6 +25,7 @@
 #include <oxenc/endian.h>
 #include <oxenc/hex.h>
 
+#include <array>
 #include <chrono>
 #include <limits>
 #include <random>
@@ -35,6 +36,16 @@ namespace srouter::session
     namespace quic = oxen::quic;
 
     static auto logcat = log::Cat("session");
+
+    std::string make_init_replay_id(std::string_view remote_pubkey, std::string_view nonce)
+    {
+        std::string id;
+        id.reserve(remote_pubkey.size() + nonce.size());
+        id.append(remote_pubkey);
+        id.append(nonce);
+        return id;
+    }
+
     void InboundSession::init(std::span<const std::byte> request)
     {
         oxenc::bt_dict_consumer outer_btdc{request};
@@ -75,7 +86,25 @@ namespace srouter::session
         _remote.is_client = true;  // Only clients can initiate sessions
 
         remote_eph_mlkem.assign(inner_btdc.require_span<std::byte, MLKEM768PubKey::SIZE>("M"));
+
+        // Session-init v2 (F12): optional signed timestamp + nonce for replay protection.  These sit
+        // inside the sealed, signed box, so an on-path attacker cannot strip them to force a
+        // downgrade.  A v1 initiator omits both.  Keys are consumed in sorted order (N, T before X).
+        if (auto n = inner_btdc.maybe<std::string_view>("N"))
+        {
+            if (n->size() != INIT_NONCE_SIZE)
+                throw std::runtime_error{"session_init: invalid v2 nonce size"};
+            _init_nonce.assign(reinterpret_cast<const char*>(n->data()), n->size());
+        }
+        if (auto t = inner_btdc.maybe<int64_t>("T"))
+            _init_ts = sys_ms{std::chrono::milliseconds{*t}};
+
         remote_eph_xpk.assign(inner_btdc.require_span<std::byte, X25519PubKey::SIZE>("X"));
+
+        // Session-init v2 (F4b): optional confidential auth token for gating non-public exits /
+        // services.  Consumed after X and before p.
+        if (auto a = inner_btdc.maybe<std::string>("a"))
+            _auth_token = std::move(*a);
 
         _remote_pivot_txid.assign(inner_btdc.require_span<std::byte, HopID::SIZE>("p"));
         _outbound_tag = inner_btdc.require<session_tag>("t");
@@ -89,6 +118,12 @@ namespace srouter::session
         });
 
         inner_btdc.finish();
+
+        // The v2 replay fields are all-or-nothing, and a present timestamp must be fresh.
+        if (_init_ts.has_value() == _init_nonce.empty())
+            throw std::runtime_error{"session_init: incomplete v2 replay fields"};
+        if (_init_ts && not init_ts_fresh(*_init_ts, srouter::time_now_ms()))
+            throw std::runtime_error{"session_init: timestamp outside freshness window"};
 
         auto local_eph_x = X25519KeyPair::generate();
 
@@ -1381,9 +1416,27 @@ namespace srouter::session
         _session_mlkem756 = MLKEM768KeyPair::generate();
         _session_x25519 = X25519KeyPair::generate();
 
+        const bool v2 = supports_init_v2();
+
         inner_btdp.append("I", _r.id());
         inner_btdp.append("M", _session_mlkem756->pub);
+        if (v2)
+        {
+            // F12: per-init nonce + signed unix-ms timestamp.  Keys N, T sort between M and X and
+            // are covered by the "~" signature below.
+            std::array<std::byte, INIT_NONCE_SIZE> nonce;
+            random_fill(nonce);
+            inner_btdp.append("N", std::string_view{reinterpret_cast<const char*>(nonce.data()), nonce.size()});
+            inner_btdp.append("T", srouter::time_now_ms().time_since_epoch().count());
+        }
         inner_btdp.append("X", _session_x25519->pub);
+        if (v2)
+        {
+            // F4b: confidential auth token for this remote, if one is configured (key a sorts
+            // between X and p).  Omitted when no token applies to this remote.
+            if (auto token = _parent.fetch_auth_token(_remote))
+                inner_btdp.append("a", *token);
+        }
         inner_btdp.append("p", path.terminal_hopid().span());
         inner_btdp.append("t", _inbound_tag);
         inner_btdp.append_signature(
@@ -1608,6 +1661,8 @@ namespace srouter::session
     }
 
     bool OutboundClientSession::use_old_init() const { return not has_flag(_cc_protos, protocol_flag::PFS_PQ); }
+
+    bool OutboundClientSession::supports_init_v2() const { return has_flag(_cc_protos, protocol_flag::INIT_V2); }
 
     std::optional<bool> OutboundClientSession::remote_accepts_tcp() const
     {

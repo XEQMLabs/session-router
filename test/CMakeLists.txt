@@ -30,7 +30,8 @@ if(SROUTER_FULL)
   target_sources(srouter-regress PRIVATE
     regress/test_dns_name.cpp
     regress/test_rpc_config.cpp
-    regress/test_rpc_auth_tiers.cpp)
+    regress/test_rpc_auth_tiers.cpp
+    regress/test_session_init_v2.cpp)
   # oxenmq::oxenmq for its interface include dirs: the rpc request headers include <oxenmq/...>,
   # which the component libraries pull in only privately.
   target_link_libraries(srouter-regress PRIVATE session-router::full oxenmq::oxenmq)

@@ -40,7 +40,9 @@ namespace srouter::handlers
 
             _auth_tokens = netconf.exit_auths;
 
-            protocol_flag protocols = protocol_flag::PFS_PQ;
+            // INIT_V2 (F4b/F12): we understand session-init v2, so advertise it and initiators will
+            // include the signed timestamp/nonce and (where configured) the auth token.
+            protocol_flag protocols = protocol_flag::PFS_PQ | protocol_flag::INIT_V2;
             if (!router.embedded())
                 protocols |= protocol_flag::IPV4 | protocol_flag::IPV6 | protocol_flag::TCP_TUNNEL;
 
@@ -1118,18 +1120,52 @@ namespace srouter::handlers
 
     void SessionEndpoint::session_post_init(std::shared_ptr<session::InboundSession> new_session)
     {
-        // Enforce the inbound access whitelist before accepting the session. validate()'s token
-        // path is not wired yet (the session-init carries no auth token), so only the address
-        // whitelist is enforced here; a token-only policy is not yet enforced. When a whitelist is
-        // configured, an initiator that is not on it is refused rather than mapped.
-        if (const auto& whitelist = router.config().network.auth_whitelist;
-            !whitelist.empty() && !whitelist.contains(new_session->remote()))
+        // F4b: enforce the configured inbound auth policy before accepting the session. The v2
+        // session-init now carries the auth token, so route both it and the address whitelist
+        // through validate() (which returns true when no auth is configured). An initiator that
+        // satisfies neither the token nor the whitelist is refused rather than mapped.
+        std::optional<std::string> presented_token;
+        if (const auto& t = new_session->auth_token())
+            presented_token = *t;
+        if (!validate(new_session->remote(), presented_token))
         {
             log::warning(
                 logcat,
-                "Rejecting inbound session from {}: not in [network]:auth-whitelist",
+                "Rejecting inbound session from {}: failed [network] auth (token/whitelist)",
                 new_session->remote());
             return;
+        }
+
+        // F12: drop replayed v2 inits, and don't let a stale (non-newer) init trample a live
+        // inbound session. Only applies to v2 initiators (those that sent a signed timestamp).
+        if (const auto new_ts = new_session->init_ts())
+        {
+            const auto now = srouter::time_now_ms();
+            std::erase_if(_init_replay, [now](const auto& kv) { return kv.second <= now; });
+
+            auto replay_id =
+                session::make_init_replay_id(new_session->remote().pubkey.to_view(), new_session->init_nonce());
+            if (_init_replay.contains(replay_id))
+            {
+                log::warning(
+                    logcat, "Dropping replayed session_init from {} (duplicate nonce)", new_session->remote());
+                return;
+            }
+            _init_replay.emplace(std::move(replay_id), *new_ts + session::INIT_TS_WINDOW);
+
+            if (auto it = _sessions.find(new_session->remote());
+                it != _sessions.end() && it->second && !it->second->is_outbound)
+            {
+                if (auto* existing = dynamic_cast<session::InboundSession*>(it->second.get()))
+                    if (auto old_ts = existing->init_ts(); old_ts && *new_ts <= *old_ts)
+                    {
+                        log::warning(
+                            logcat,
+                            "Dropping stale session_init from {} (timestamp not newer than live session)",
+                            new_session->remote());
+                        return;
+                    }
+            }
         }
 
         // FIXME: for now only tun clients can have inbound sessions, but eventually that will
