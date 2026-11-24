@@ -25,7 +25,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       libssl-dev nlohmann-json3-dev libgnutls28-dev \
  && rm -rf /var/lib/apt/lists/*
 
-ARG SR_REF=xeqm/netid-and-snlist-gate
+# Default to the validated release line (contains the 2 XEQM patches, rebased onto
+# community dev). Pin to the sidecar-v1.1.2 tag once it is cut.
+ARG SR_REF=xeqm/sr-community-rebase
 RUN git clone --branch "${SR_REF}" --recurse-submodules --shallow-submodules \
       https://github.com/XEQMLabs/session-router /src
 

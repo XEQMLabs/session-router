@@ -129,7 +129,7 @@ next uptime proof (~1h), which is when the public dashboard count ticks up.
   stays slim) and is the recommended default; the supervisor option is noted for
   completeness.
 - **Decide 1.1.4's community routing layer** (ship SR vs classic lokinet vs neither).
-  See `../xeqm-session-router-HANDOFF.md` item 6.
+  This is the open strategic call; the packaging here does not presume the outcome.
 - **xeqm.conf for a service node.** The seed-layout quickstart `xeqm.conf` is not a
   service-node config; a service-node sample (with `--service-node`, quorumnet, public
   SN IP, key persistence) should ship alongside this.
