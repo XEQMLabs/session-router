@@ -1118,6 +1118,20 @@ namespace srouter::handlers
 
     void SessionEndpoint::session_post_init(std::shared_ptr<session::InboundSession> new_session)
     {
+        // Enforce the inbound access whitelist before accepting the session. validate()'s token
+        // path is not wired yet (the session-init carries no auth token), so only the address
+        // whitelist is enforced here; a token-only policy is not yet enforced. When a whitelist is
+        // configured, an initiator that is not on it is refused rather than mapped.
+        if (const auto& whitelist = router.config().network.auth_whitelist;
+            !whitelist.empty() && !whitelist.contains(new_session->remote()))
+        {
+            log::warning(
+                logcat,
+                "Rejecting inbound session from {}: not in [network]:auth-whitelist",
+                new_session->remote());
+            return;
+        }
+
         // FIXME: for now only tun clients can have inbound sessions, but eventually that will
         //        not be the case and we'll need to "if tun" this.
         if (!map_session_v6(*new_session))

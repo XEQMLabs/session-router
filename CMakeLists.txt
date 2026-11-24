@@ -158,7 +158,10 @@ target_compile_options(session-router-base-internal_warnings INTERFACE "$<$<OR:$
 
 if(SROUTER_XSAN)
   string(APPEND CMAKE_CXX_FLAGS_DEBUG " -fsanitize=${SROUTER_XSAN} -fno-omit-frame-pointer -fno-sanitize-recover")
-  foreach(type EXE MODULE SHARED STATIC)
+  # STATIC is intentionally excluded: a static library is assembled by `ar`, not a linker, so
+  # passing it `-fsanitize=...` makes the archiver fail (e.g. `gcc-ar cr ... -fsanitize=address`).
+  # The sanitizer runtime only needs to be pulled in at the final executable/shared/module link.
+  foreach(type EXE MODULE SHARED)
     string(APPEND CMAKE_${type}_LINKER_FLAGS_DEBUG " -fsanitize=${SROUTER_XSAN} -fno-omit-frame-pointer -fno-sanitize-recover")
   endforeach()
   message(STATUS "Doing a ${SROUTER_XSAN} sanitizer build")

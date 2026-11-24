@@ -127,7 +127,19 @@ namespace srouter
 
                 if (rpc.replier.has_value())
                 {
-                    rpc.send_response();
+                    // An invoke() may leave the response null (e.g. the unimplemented status
+                    // handlers). json_to_bt throws on a top-level null for a bt-mode request, and
+                    // this runs outside the try above, so the throw would escape the OMQ command
+                    // handler. Normalise null to an empty object and guard the serialization.
+                    if (rpc.response.is_null())
+                        rpc.response = nlohmann::json::object();
+                    try
+                    {
+                        rpc.send_response();
+                    }
+                    catch (const std::exception&)
+                    {
+                    }
                 }
             }
         };

@@ -78,6 +78,16 @@ namespace srouter::rpc
 
         for (const auto& addr : _router.config().api.rpc_bind_addrs)
         {
+            // The control RPC is unauthenticated (listen_plain, AuthLevel::none), so a non-loopback
+            // TCP bind exposes router control to the network. Warn loudly; the operator should bind
+            // to loopback or an IPC socket.
+            if (addr.starts_with("tcp://") && addr.find("127.0.0.1") == std::string::npos
+                && addr.find("[::1]") == std::string::npos && addr.find("localhost") == std::string::npos)
+                log::warning(
+                    logcat,
+                    "RPC bound to non-loopback address {}: the control RPC is unauthenticated and now reachable "
+                    "from the network. Bind it to loopback (tcp://127.0.0.1) or an ipc:// socket instead.",
+                    addr);
             _omq.listen_plain(addr);
             log::debug(logcat, "Bound RPC server to {}", addr);
         }
@@ -323,8 +333,11 @@ namespace srouter::rpc
         }
 
         _router._jq->call([this, netaddr = *maybe_netaddr, replier = findcc.move()]() mutable {
+            // Move the replier into the inner callback: lookup_client_intro stores it for an async
+            // network response that fires after this outer job has returned and been destroyed, so
+            // capturing it by reference was a use-after-free.
             _router.session_endpoint().lookup_client_intro(
-                netaddr.pubkey, [&replier](std::optional<srouter::ClientContact> cc) {
+                netaddr.pubkey, [replier = std::move(replier)](std::optional<srouter::ClientContact> cc) mutable {
                     nlohmann::json result;
                     if (cc)
                     {
