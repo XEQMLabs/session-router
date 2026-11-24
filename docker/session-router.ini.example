@@ -1,36 +1,33 @@
-# Session Router relay config (XEQM service-node sidecar) - 1.1.4, non-enforcing.
-# Mounted by docker-compose.sr.yml at /etc/xeqm-session-router/snode1.ini.
-# A single Docker service node has one snode; multi-SN hosts use one ini per snode.
+# Session Router relay config for the Docker setup in this directory.
+# Copy to session-router.ini next to docker-compose.sr.yml and set public-ip.
 
 [router]
+# XEQM network id. Leave as it is.
 netid=xeqm
-# public-ip: the node's reachable public IPv4. Required for the mesh / router contact
-# once SR enforcement is flipped (future HF). OPTIONAL for the non-enforcing 1.1.4
-# adoption signal, which comes from the LOCAL oxend ping and works even if the mesh
-# cannot form. Uncomment and set it if you want the node to join the SR mesh.
-# public-ip=REPLACE_WITH_PUBLIC_IPV4
-public-port=1191
+# Relay state. This path is the sr-state volume in the compose file.
+data-dir=/var/lib/xeqm-session-router/snode1
+# Your server's public IPv4 address, and the UDP port other relays reach you on.
+# The relay does not start without a public address.
+public-ip=REPLACE_WITH_PUBLIC_IPV4
+public-port=1190
 
 [network]
 ifname=sr0
 
 [bind]
-listen=0.0.0.0:1191
+# Inside the container; the compose file publishes this port to the host.
+listen=0.0.0.0:1190
 
 [oxend]
-# The daemon's lmq-local-control IPC socket, on the shared /data volume.
-# Must match the daemon's --lmq-local-control=ipc:///data/oxend.sock.
+# The node's control socket on the shared /data volume. Must match the node's
+# --lmq-local-control=ipc:///data/oxend.sock in the compose file.
 rpc=ipc:///data/oxend.sock
 
-# [bootstrap] is managed by the image entrypoint, which sets add-node to the resolved
-# bootstrap (an operator override if mounted, else the image's baked pinned default) or
-# strips it when none is published yet. The relay verifies the signed RC list on load.
-# Set add-node here only if you run the binary outside this image.
-# [bootstrap]
-# add-node=/opt/xeqm/share/session-router/bootstrap.signed
+# The [bootstrap] section is written by the image's entrypoint, which points the
+# relay at the signed relay list in the image (or at your override, if you mount
+# one). Leave it out of this file.
 
 [logging]
-# type=print -> container stdout/journald. Do NOT use type=file here (unrotated file
-# logs filled a host disk under classic lokinet; avoid repeating that).
+# print -> container log (docker logs). Do not use type=file here.
 type=print
 level=warn

@@ -1,97 +1,53 @@
 # =============================================================================
-# XEQM-patched Session Router -> slim runtime image
-# Publish as: ghcr.io/xeqmlabs/xeqm-session-router:v1.1.4
+# XEQM Session Router relay -> runtime image
 #
-# Source: github.com/XEQMLabs/session-router  (fork of session-foundation/session-router)
-#   branch xeqm/netid-and-snlist-gate  = 2 patches:
-#     net: add XEQM=2 to the NetID enum (netid=xeqm support)
-#     rpc: bypass the >= {11,6,0} SR-eligible gate when netid == XEQM
-#   NOTE: the validated release line is xeqm/sr-community-rebase (sidecar-v1.1.1 ==
-#   that branch head); point SR_REF there, soon the sidecar-v1.1.2 tag, rather than
-#   at the 2-patch branch.
+# Installs the released relay package instead of compiling it, so the image
+# carries exactly the binaries and the signed bootstrap list of the release
+# named in SR_TAG, pinned by sha256. To move to a new release, change SR_TAG
+# and both checksums together (they are on the release page).
 #
-# Build gotcha (do not drop libgnutls28-dev): without it, oxen-libquic compiles a
-# bundled GnuTLS 3.8.13 that needs nettle >= 3.10 (Ubuntu 24.04 has 3.9) and fails.
-# System GnuTLS 3.8.3 satisfies the real minimum (3.7.2).
-# For arm64, build with --platform linux/arm64 (same recipe).
+# Needs BuildKit (the default in current Docker), which sets TARGETARCH.
+# Both linux/amd64 and linux/arm64 are supported.
 # =============================================================================
 
-FROM ubuntu:24.04 AS build
-ENV DEBIAN_FRONTEND=noninteractive
+FROM ubuntu:22.04 AS fetch
+ARG TARGETARCH
+ARG SR_TAG=sidecar-v1.1.2
+ARG SR_SHA256_AMD64=7ff73d6728e4370ad4370a49b98ebed28c5f9c723313303a3b60ed053fe3d7ee
+ARG SR_SHA256_ARM64=9584c09a922e09a2d1321a45f40523d1280726fb480440553354f69ef849d7b4
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      build-essential cmake git pkg-config automake libtool ca-certificates \
-      libcap-dev libuv1-dev libsodium-dev libzmq3-dev cppzmq-dev \
-      libcurl4-openssl-dev libevent-dev nettle-dev libunbound-dev \
-      libssl-dev nlohmann-json3-dev libgnutls28-dev \
+      ca-certificates curl xz-utils \
  && rm -rf /var/lib/apt/lists/*
-
-# Default to the validated release line (contains the 2 XEQM patches, rebased onto
-# community dev). Pin to the sidecar-v1.1.2 tag once it is cut.
-ARG SR_REF=xeqm/sr-community-rebase
-RUN git clone --branch "${SR_REF}" --recurse-submodules --shallow-submodules \
-      https://github.com/XEQMLabs/session-router /src
-
-WORKDIR /src/build
-# WITH_SETCAP=OFF: no setcap at build time; capabilities are granted at runtime via
-# the compose cap_add (NET_ADMIN, NET_BIND_SERVICE), matching the systemd unit.
-RUN cmake .. -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF \
-             -DWITH_SETCAP=OFF -DSUBMODULE_CHECK=OFF \
- && make -j"$(nproc)"
-
-# The executable target `session-router` is defined in src/daemon/CMakeLists.txt, so
-# it normally lands at /src/build/src/daemon/session-router. Locate it robustly rather
-# than hardcode, in case the output dir differs.
-RUN set -eux; mkdir -p /out; \
-    cp "$(find /src/build -type f -name session-router -perm -u+x | head -1)" /out/session-router; \
-    for h in session-router-config session-router-cntrl; do \
-      f="$(find /src/build -type f -name "$h" -perm -u+x | head -1)"; \
-      [ -n "$f" ] && cp "$f" /out/ || true; \
-    done
+RUN set -eux; \
+    case "${TARGETARCH}" in \
+      amd64) sum="${SR_SHA256_AMD64}" ;; \
+      arm64) sum="${SR_SHA256_ARM64}" ;; \
+      *) echo "unsupported architecture: '${TARGETARCH}' (build with BuildKit on amd64 or arm64)" >&2; exit 1 ;; \
+    esac; \
+    pkg="session-router-xeqm-linux-${TARGETARCH}-${SR_TAG}"; \
+    curl -fsSL -o /tmp/pkg.tar.xz \
+      "https://github.com/XEQMLabs/session-router/releases/download/${SR_TAG}/${pkg}.tar.xz"; \
+    echo "${sum}  /tmp/pkg.tar.xz" | sha256sum -c -; \
+    mkdir /pkg; \
+    tar -xJf /tmp/pkg.tar.xz -C /pkg --strip-components=1; \
+    cd /pkg; sha256sum -c SHA256SUMS
 
 # ---- runtime ----
-FROM ubuntu:24.04
-ENV DEBIAN_FRONTEND=noninteractive
-RUN apt-get update && apt-get install -y --no-install-recommends \
-      libuv1t64 libsodium23 libzmq5 libcurl4 \
-      libevent-core-2.1-7 libevent-pthreads-2.1-7 \
-      libunbound8 libssl3 libgnutls30 libcap2 ca-certificates curl \
- && rm -rf /var/lib/apt/lists/* \
- && useradd --system --no-create-home --shell /usr/sbin/nologin xeqm
-COPY --from=build /out/ /opt/xeqm/bin/
-
-# ---- bootstrap list (bake-pinned + verify) ----
-# The SR mesh bootstrap is a SIGNED RC list (the relay verifies its signature when it
-# loads add-node). Bake a pinned, checksum-verified copy into the image so a container
-# works with no manual drop-in; an operator can still override it at runtime (see the
-# entrypoint and compose). Supply both ARGs at build time to fetch and pin it:
-#   docker build \
-#     --build-arg SR_BOOTSTRAP_URL=https://bootstrap.xeqmlabs.com/session-router-bootstrap.signed \
-#     --build-arg SR_BOOTSTRAP_SHA256=<sha256-of-the-published-file> ...
-# TODO(release owner): the signed bootstrap is NOT published yet (that URL 404s). Until
-# it is, leave the ARGs empty: the image ships with no baked default, which is fine
-# while SR is non-enforcing in 1.1.4 (the local-socket adoption signal needs no mesh).
-# Once published, always pass both ARGs so every image carries a verified default.
-ARG SR_BOOTSTRAP_URL=
-ARG SR_BOOTSTRAP_SHA256=
-RUN set -eux; \
-    install -d -o xeqm -g xeqm /opt/xeqm/share/session-router; \
-    if [ -n "$SR_BOOTSTRAP_URL" ] && [ -n "$SR_BOOTSTRAP_SHA256" ]; then \
-      curl -fsSL "$SR_BOOTSTRAP_URL" -o /opt/xeqm/share/session-router/bootstrap.signed; \
-      echo "${SR_BOOTSTRAP_SHA256}  /opt/xeqm/share/session-router/bootstrap.signed" | sha256sum -c -; \
-    else \
-      echo "NOTE: no SR_BOOTSTRAP_URL/SHA256 given; image ships without a baked bootstrap (see README TODO)"; \
-    fi
-
+# The release binaries are static apart from glibc and libstdc++, which the base
+# image already has.
+FROM ubuntu:22.04
+COPY --from=fetch /pkg/bin/session-router /pkg/bin/session-router-config /opt/xeqm/bin/
+# The signed relay list the package ships (contrib/bootstrap/xeqm.signed in this
+# repository). The relay verifies its signature when it loads it.
+COPY --from=fetch /pkg/bootstrap.signed /opt/xeqm/share/session-router/bootstrap.signed
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod 0755 /usr/local/bin/docker-entrypoint.sh
 
-# NOTE on the shared socket: this image runs as `xeqm`. The daemon's lmq-local-control
-# socket on the shared volume must be reachable by this user. If your daemon image runs
-# as root and the socket is root-only, either run both containers as the same UID
-# (set `user:` on both services) or relax the socket ownership. Verify this once - it is
-# the single integration point between the two containers.
-USER xeqm
-# The entrypoint resolves the bootstrap (override else baked default), renders a
-# writable ini, and execs the relay. Extra CMD args are passed through.
+# Runs as root inside the container, for two reasons:
+#  - the xeqm-node image runs as root, and the control socket it creates is
+#    readable by root only;
+#  - Docker gives cap_add capabilities to root only, and the relay needs
+#    NET_ADMIN to create its TUN device.
+# The container still has only Docker's default capabilities plus NET_ADMIN.
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 CMD []
