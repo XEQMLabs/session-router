@@ -1,0 +1,64 @@
+# =============================================================================
+# XEQM-patched Session Router -> slim runtime image
+# Publish as: ghcr.io/xeqmlabs/xeqm-session-router:v1.1.4
+#
+# Source: github.com/XEQMLabs/session-router  (fork of session-foundation/session-router)
+#   branch xeqm/netid-and-snlist-gate  = 2 patches:
+#     net: add XEQM=2 to the NetID enum (netid=xeqm support)
+#     rpc: bypass the >= {11,6,0} SR-eligible gate when netid == XEQM
+#
+# Build gotcha (do not drop libgnutls28-dev): without it, oxen-libquic compiles a
+# bundled GnuTLS 3.8.13 that needs nettle >= 3.10 (Ubuntu 24.04 has 3.9) and fails.
+# System GnuTLS 3.8.3 satisfies the real minimum (3.7.2).
+# For arm64, build with --platform linux/arm64 (same recipe).
+# =============================================================================
+
+FROM ubuntu:24.04 AS build
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      build-essential cmake git pkg-config automake libtool ca-certificates \
+      libcap-dev libuv1-dev libsodium-dev libzmq3-dev cppzmq-dev \
+      libcurl4-openssl-dev libevent-dev nettle-dev libunbound-dev \
+      libssl-dev nlohmann-json3-dev libgnutls28-dev \
+ && rm -rf /var/lib/apt/lists/*
+
+ARG SR_REF=xeqm/netid-and-snlist-gate
+RUN git clone --branch "${SR_REF}" --recurse-submodules --shallow-submodules \
+      https://github.com/XEQMLabs/session-router /src
+
+WORKDIR /src/build
+# WITH_SETCAP=OFF: no setcap at build time; capabilities are granted at runtime via
+# the compose cap_add (NET_ADMIN, NET_BIND_SERVICE), matching the systemd unit.
+RUN cmake .. -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF \
+             -DWITH_SETCAP=OFF -DSUBMODULE_CHECK=OFF \
+ && make -j"$(nproc)"
+
+# The executable target `session-router` is defined in src/daemon/CMakeLists.txt, so
+# it normally lands at /src/build/src/daemon/session-router. Locate it robustly rather
+# than hardcode, in case the output dir differs.
+RUN set -eux; mkdir -p /out; \
+    cp "$(find /src/build -type f -name session-router -perm -u+x | head -1)" /out/session-router; \
+    for h in session-router-config session-router-cntrl; do \
+      f="$(find /src/build -type f -name "$h" -perm -u+x | head -1)"; \
+      [ -n "$f" ] && cp "$f" /out/ || true; \
+    done
+
+# ---- runtime ----
+FROM ubuntu:24.04
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      libuv1t64 libsodium23 libzmq5 libcurl4 \
+      libevent-core-2.1-7 libevent-pthreads-2.1-7 \
+      libunbound8 libssl3 libgnutls30 libcap2 ca-certificates \
+ && rm -rf /var/lib/apt/lists/* \
+ && useradd --system --no-create-home --shell /usr/sbin/nologin xeqm
+COPY --from=build /out/ /opt/xeqm/bin/
+# Runs as a service-node relay. The ini path is provided by the compose bind-mount.
+# NOTE on the shared socket: this image runs as `xeqm`. The daemon's lmq-local-control
+# socket on the shared volume must be reachable by this user. If your daemon image runs
+# as root and the socket is root-only, either run both containers as the same UID
+# (set `user:` on both services) or relax the socket ownership. Verify this once - it is
+# the single integration point between the two containers.
+USER xeqm
+ENTRYPOINT ["/opt/xeqm/bin/session-router"]
+CMD ["-r", "-c", "/etc/xeqm-session-router/snode1.ini"]

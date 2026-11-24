@@ -1,0 +1,72 @@
+# =============================================================================
+# XEQM service node + Session Router sidecar (two-container variant) - 1.1.4
+# DRAFT for review. Session Router is NON-ENFORCING in 1.1.4 (adoption signal only).
+#
+# IMPORTANT: Session Router is a SERVICE-NODE sidecar. It fetches the SN private
+# keys from the daemon and pings as that service node. Do NOT run it against a
+# seed node or a plain pubnode - those have no SN identity and nothing to report.
+# This compose assumes an ALREADY-REGISTERED service node whose keys live in the
+# mounted data volume. Registration/staking is out of scope here.
+#
+# The two containers share one data volume so the sidecar can reach the daemon's
+# lmq-local-control IPC socket (ipc:///data/oxend.sock). That socket is the ONLY
+# wiring the non-enforcing adoption signal needs; the SR UDP mesh port is optional
+# until SR enforcement is flipped (a future HF).
+# =============================================================================
+
+services:
+  xeqm-node:
+    image: ghcr.io/xeqmlabs/xeqm-node:v1.1.4
+    container_name: xeqm-node
+    restart: unless-stopped
+    volumes:
+      - xeqm-data:/data                      # shared: chain data AND the oxend.sock the sidecar pings
+      - ./xeqm.conf:/data/xeqm.conf:ro       # your SERVICE-NODE config (must include --service-node)
+    ports:
+      - "9230:9230/tcp"
+      - "9230:9230/udp"
+      - "9232:9232/udp"                      # quorumnet (service node)
+    command:
+      - --non-interactive
+      - --config-file=/data/xeqm.conf
+      # The sidecar connects to this admin IPC socket to self-fetch SN keys and ping.
+      # It is an ADMIN socket: keep it on the private shared volume, never a published port.
+      - --lmq-local-control=ipc:///data/oxend.sock
+    stop_grace_period: 60s
+    logging:
+      driver: journald
+      options:
+        tag: xeqm-node
+
+  session-router:
+    # NOT YET PUBLISHED - build and push from docker/Dockerfile.session-router first.
+    image: ghcr.io/xeqmlabs/xeqm-session-router:v1.1.4
+    container_name: xeqm-session-router
+    # restart: unless-stopped is the Docker equivalent of `systemctl enable`.
+    # Without a persistent restart policy the sidecar does NOT come back after a
+    # reboot/daemon restart, and SR reporting silently drops to [0,0,0] - exactly
+    # the failure that decayed the fleet 68 -> 52. Keep this line.
+    restart: unless-stopped
+    depends_on:
+      - xeqm-node
+    cap_add:
+      - NET_ADMIN                            # from the systemd unit: AmbientCapabilities
+      - NET_BIND_SERVICE
+    devices:
+      - /dev/net/tun:/dev/net/tun            # from the systemd unit: DeviceAllow=/dev/net/tun
+    volumes:
+      - xeqm-data:/data                      # SAME volume -> reach ipc:///data/oxend.sock
+      - sr-state:/var/lib/xeqm-session-router/snode1
+      - ./session-router.ini:/etc/xeqm-session-router/snode1.ini:ro
+      - ./bootstrap.signed:/var/lib/xeqm-session-router/bootstrap.signed:ro
+    ports:
+      - "1191:1191/udp"                      # SR mesh port - OPTIONAL for non-enforcing 1.1.4; needed once enforced
+    command: ["-r", "-c", "/etc/xeqm-session-router/snode1.ini"]
+    logging:
+      driver: journald
+      options:
+        tag: xeqm-session-router
+
+volumes:
+  xeqm-data:
+  sr-state:

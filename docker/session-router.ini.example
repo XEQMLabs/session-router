@@ -1,0 +1,34 @@
+# Session Router relay config (XEQM service-node sidecar) - 1.1.4, non-enforcing.
+# Mounted by docker-compose.sr.yml at /etc/xeqm-session-router/snode1.ini.
+# A single Docker service node has one snode; multi-SN hosts use one ini per snode.
+
+[router]
+netid=xeqm
+# public-ip: the node's reachable public IPv4. Required for the mesh / router contact
+# once SR enforcement is flipped (future HF). OPTIONAL for the non-enforcing 1.1.4
+# adoption signal, which comes from the LOCAL oxend ping and works even if the mesh
+# cannot form. Uncomment and set it if you want the node to join the SR mesh.
+# public-ip=REPLACE_WITH_PUBLIC_IPV4
+public-port=1191
+
+[network]
+ifname=sr0
+
+[bind]
+listen=0.0.0.0:1191
+
+[oxend]
+# The daemon's lmq-local-control IPC socket, on the shared /data volume.
+# Must match the daemon's --lmq-local-control=ipc:///data/oxend.sock.
+rpc=ipc:///data/oxend.sock
+
+[bootstrap]
+# The public XEQM SR bootstrap (bencoded RC list). Ship bootstrap.signed next to the
+# compose file; it is bind-mounted to this path.
+add-node=/var/lib/xeqm-session-router/bootstrap.signed
+
+[logging]
+# type=print -> container stdout/journald. Do NOT use type=file here (unrotated file
+# logs filled a host disk under classic lokinet; avoid repeating that).
+type=print
+level=warn
