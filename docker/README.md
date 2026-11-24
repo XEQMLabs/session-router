@@ -8,8 +8,8 @@ only; it does not gate proofs or consensus).
 Files here:
 - `docker-compose.sr.yml` - the two-container stack (daemon + SR sidecar)
 - `Dockerfile.session-router` - builds the SR runtime image (not yet published)
+- `docker-entrypoint.sh` - resolves the bootstrap and launches the relay
 - `session-router.ini.example` - SR relay config (copy to `session-router.ini`)
-- `bootstrap.signed` - ship the public XEQM SR bootstrap here (bind-mounted)
 
 ## When this applies
 
@@ -35,6 +35,32 @@ still report `[1,1,0]` for exactly this reason.
 The admin socket grants privileged control, so keep it an `ipc://` socket on the
 private shared volume. Never publish it on a TCP port.
 
+## Bootstrap list
+
+The SR mesh bootstrap is a **signed RC list**: the relay verifies its signature when
+it loads `add-node`, so the file is safe to distribute over any channel. The image
+handles it so operators do not hand-place a blob:
+
+- **Baked pinned default.** The Dockerfile fetches the published bootstrap at build
+  time and verifies it against a pinned `sha256` before baking it into the image at
+  `/opt/xeqm/share/session-router/bootstrap.signed`. Every image then carries a
+  known-good default and starts with no manual step.
+- **Runtime verification.** The relay checks the signed RC list's signature on load;
+  the build-time `sha256` pins exactly which release the image carries.
+- **Optional override.** To run a different list, set `SR_BOOTSTRAP` or bind-mount a
+  file at `/etc/xeqm-session-router/bootstrap.signed`. The entrypoint prefers an
+  override and otherwise uses the baked default. This is an escape hatch, not the
+  normal path.
+
+> **TODO (release owner):** the signed bootstrap is **not published yet** - the
+> convention URL `https://bootstrap.xeqmlabs.com/session-router-bootstrap.signed`
+> returns 404. Until it is published, build with the bootstrap ARGs empty: the image
+> ships **without** a baked default, which is fine while SR is non-enforcing (the
+> local-socket adoption signal needs no mesh). Once the file is published, build with
+> `--build-arg SR_BOOTSTRAP_URL=... --build-arg SR_BOOTSTRAP_SHA256=...` so every
+> image carries a verified default, and the entrypoint's "no bootstrap" warning path
+> should be tightened to fail-fast when SR enforcement lands.
+
 ## Two things that are easy to get wrong
 
 1. **Persistence = `restart: unless-stopped`.** This is the Docker equivalent of
@@ -52,14 +78,19 @@ private shared volume. Never publish it on a TCP port.
 ## Build and run
 
 ```bash
-# 1. Build + publish the SR image (x86-64; add --platform linux/arm64 for arm)
+# 1. Build + publish the SR image (x86-64; add --platform linux/arm64 for arm).
+#    Once the signed bootstrap is published, add the two bootstrap ARGs so the image
+#    bakes a pinned, verified default (see "Bootstrap list"):
+#      --build-arg SR_BOOTSTRAP_URL=https://bootstrap.xeqmlabs.com/session-router-bootstrap.signed \
+#      --build-arg SR_BOOTSTRAP_SHA256=<sha256>
 docker build -f Dockerfile.session-router -t ghcr.io/xeqmlabs/xeqm-session-router:v1.1.4 .
 docker push ghcr.io/xeqmlabs/xeqm-session-router:v1.1.4
 
 # 2. Prepare config next to the compose file
 cp session-router.ini.example session-router.ini   # edit public-ip if you want the mesh
 #   place your service-node xeqm.conf here too (must include --service-node)
-#   place bootstrap.signed here (the public XEQM SR bootstrap)
+#   bootstrap: nothing to place - the image uses its baked default. Only bind-mount
+#   your own bootstrap.signed (see the compose override line) to override it.
 
 # 3. Launch
 docker compose -f docker-compose.sr.yml up -d
@@ -79,6 +110,9 @@ next uptime proof (~1h), which is when the public dashboard count ticks up.
 
 ## Open items for the release owner
 
+- **Publish the signed bootstrap** to `bootstrap.xeqmlabs.com` (the convention URL
+  still 404s), then rebuild the image with the `SR_BOOTSTRAP_URL` / `SR_BOOTSTRAP_SHA256`
+  ARGs so it carries a verified default. See "Bootstrap list".
 - **Publish the SR image.** The Dockerfile is VALIDATED (built on fernando 2026-11-21,
   x86-64, 102MB; runs as non-root `xeqm`; `--version` = `session-router-1.1.0-7d6931f9`
   matching the fork branch HEAD; all three binaries present). The `find` resolves the

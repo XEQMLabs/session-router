@@ -6,6 +6,9 @@
 #   branch xeqm/netid-and-snlist-gate  = 2 patches:
 #     net: add XEQM=2 to the NetID enum (netid=xeqm support)
 #     rpc: bypass the >= {11,6,0} SR-eligible gate when netid == XEQM
+#   NOTE: the validated release line is xeqm/sr-community-rebase (sidecar-v1.1.1 ==
+#   that branch head); point SR_REF there, soon the sidecar-v1.1.2 tag, rather than
+#   at the 2-patch branch.
 #
 # Build gotcha (do not drop libgnutls28-dev): without it, oxen-libquic compiles a
 # bundled GnuTLS 3.8.13 that needs nettle >= 3.10 (Ubuntu 24.04 has 3.9) and fails.
@@ -49,16 +52,44 @@ ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
       libuv1t64 libsodium23 libzmq5 libcurl4 \
       libevent-core-2.1-7 libevent-pthreads-2.1-7 \
-      libunbound8 libssl3 libgnutls30 libcap2 ca-certificates \
+      libunbound8 libssl3 libgnutls30 libcap2 ca-certificates curl \
  && rm -rf /var/lib/apt/lists/* \
  && useradd --system --no-create-home --shell /usr/sbin/nologin xeqm
 COPY --from=build /out/ /opt/xeqm/bin/
-# Runs as a service-node relay. The ini path is provided by the compose bind-mount.
+
+# ---- bootstrap list (bake-pinned + verify) ----
+# The SR mesh bootstrap is a SIGNED RC list (the relay verifies its signature when it
+# loads add-node). Bake a pinned, checksum-verified copy into the image so a container
+# works with no manual drop-in; an operator can still override it at runtime (see the
+# entrypoint and compose). Supply both ARGs at build time to fetch and pin it:
+#   docker build \
+#     --build-arg SR_BOOTSTRAP_URL=https://bootstrap.xeqmlabs.com/session-router-bootstrap.signed \
+#     --build-arg SR_BOOTSTRAP_SHA256=<sha256-of-the-published-file> ...
+# TODO(release owner): the signed bootstrap is NOT published yet (that URL 404s). Until
+# it is, leave the ARGs empty: the image ships with no baked default, which is fine
+# while SR is non-enforcing in 1.1.4 (the local-socket adoption signal needs no mesh).
+# Once published, always pass both ARGs so every image carries a verified default.
+ARG SR_BOOTSTRAP_URL=
+ARG SR_BOOTSTRAP_SHA256=
+RUN set -eux; \
+    install -d -o xeqm -g xeqm /opt/xeqm/share/session-router; \
+    if [ -n "$SR_BOOTSTRAP_URL" ] && [ -n "$SR_BOOTSTRAP_SHA256" ]; then \
+      curl -fsSL "$SR_BOOTSTRAP_URL" -o /opt/xeqm/share/session-router/bootstrap.signed; \
+      echo "${SR_BOOTSTRAP_SHA256}  /opt/xeqm/share/session-router/bootstrap.signed" | sha256sum -c -; \
+    else \
+      echo "NOTE: no SR_BOOTSTRAP_URL/SHA256 given; image ships without a baked bootstrap (see README TODO)"; \
+    fi
+
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod 0755 /usr/local/bin/docker-entrypoint.sh
+
 # NOTE on the shared socket: this image runs as `xeqm`. The daemon's lmq-local-control
 # socket on the shared volume must be reachable by this user. If your daemon image runs
 # as root and the socket is root-only, either run both containers as the same UID
 # (set `user:` on both services) or relax the socket ownership. Verify this once - it is
 # the single integration point between the two containers.
 USER xeqm
-ENTRYPOINT ["/opt/xeqm/bin/session-router"]
-CMD ["-r", "-c", "/etc/xeqm-session-router/snode1.ini"]
+# The entrypoint resolves the bootstrap (override else baked default), renders a
+# writable ini, and execs the relay. Extra CMD args are passed through.
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
+CMD []

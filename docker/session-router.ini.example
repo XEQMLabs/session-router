@@ -22,10 +22,12 @@ listen=0.0.0.0:1191
 # Must match the daemon's --lmq-local-control=ipc:///data/oxend.sock.
 rpc=ipc:///data/oxend.sock
 
-[bootstrap]
-# The public XEQM SR bootstrap (bencoded RC list). Ship bootstrap.signed next to the
-# compose file; it is bind-mounted to this path.
-add-node=/var/lib/xeqm-session-router/bootstrap.signed
+# [bootstrap] is managed by the image entrypoint, which sets add-node to the resolved
+# bootstrap (an operator override if mounted, else the image's baked pinned default) or
+# strips it when none is published yet. The relay verifies the signed RC list on load.
+# Set add-node here only if you run the binary outside this image.
+# [bootstrap]
+# add-node=/opt/xeqm/share/session-router/bootstrap.signed
 
 [logging]
 # type=print -> container stdout/journald. Do NOT use type=file here (unrotated file
