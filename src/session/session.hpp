@@ -42,6 +42,30 @@ namespace srouter
 
         struct TCPTunnel;
 
+        // Session-init v2 (gated by protocol_flag::INIT_V2 on the target's ClientContact): the init
+        // carries a signed timestamp + random nonce so a captured init cannot be replayed to tear
+        // down and replace a live session (F12), and a signed, confidential auth token so non-public
+        // exits/services can gate inbound sessions (F4b).
+
+        // Accepted +/- clock skew between an initiator's signed init timestamp and our clock.  Also
+        // bounds how long a captured init is replayable and how large the replay cache must be.
+        inline constexpr std::chrono::milliseconds INIT_TS_WINDOW = 60s;
+
+        // Size of the random per-init nonce.
+        inline constexpr size_t INIT_NONCE_SIZE = 16;
+
+        // True if a v2 init timestamp `ts` is within INIT_TS_WINDOW of `now` (in either direction).
+        inline bool init_ts_fresh(sys_ms ts, sys_ms now)
+        {
+            auto skew = now >= ts ? now - ts : ts - now;
+            return skew <= INIT_TS_WINDOW;
+        }
+
+        // Builds the replay-cache identifier for a v2 init: the initiator pubkey bytes followed by
+        // the per-init nonce.  Byte-identical replays map to the same id; distinct inits (fresh
+        // nonce) do not.
+        std::string make_init_replay_id(std::string_view remote_pubkey, std::string_view nonce);
+
         // We must not use the same nonce for path switch and session init, as they can be in the
         // same message using the same shared secret.  As such, the path switch message will use
         // dh_nonce ^ this xor factor.
@@ -438,6 +462,11 @@ namespace srouter
 
             virtual bool use_old_init() const = 0;
 
+            // True if the target advertised protocol_flag::INIT_V2 and we should therefore include
+            // the v2 session-init fields (timestamp + nonce, and an auth token if one is configured
+            // for this remote).  Default false (e.g. relay sessions); overridden by client sessions.
+            virtual bool supports_init_v2() const { return false; }
+
           private:
             // Switches to (or starts using) the given path.
             void switch_path(path::Path& p, const HopID& new_pivot_txid);
@@ -557,6 +586,7 @@ namespace srouter
 
             void select_new_current() override;
             bool use_old_init() const override;
+            bool supports_init_v2() const override;
             std::optional<bool> remote_accepts_tcp() const override;
 
           protected:
@@ -606,11 +636,27 @@ namespace srouter
             // protocol flags advertised by the initiator in the (1.1+) session init:
             protocol_flag protos;
 
+            // Session-init v2 fields parsed out of the init (empty/nullopt for a v1 initiator).
+            // `_auth_token` is the F4b exit/service auth token; `_init_ts`/`_init_nonce` are the F12
+            // replay-protection timestamp and nonce.
+            std::optional<std::string> _auth_token;
+            std::optional<sys_ms> _init_ts;
+            std::string _init_nonce;
+
           public:
             // Called at the end of session initialization, after Session setup housecleaning is
             // done, to actually send the session accept generating early in session init by
             // `init()`.
             void session_init_accept();
+
+            // The v2 auth token presented by the initiator, if any (F4b).
+            const std::optional<std::string>& auth_token() const { return _auth_token; }
+
+            // The initiator's signed v2 init timestamp, if present (F12).  nullopt for a v1 init.
+            std::optional<sys_ms> init_ts() const { return _init_ts; }
+
+            // The initiator's v2 init nonce (raw bytes), empty for a v1 init (F12).
+            const std::string& init_nonce() const { return _init_nonce; }
         };
 
         // Inbound Session *to* client from client (we are the target client)

@@ -29,6 +29,7 @@ namespace srouter
         {
             friend class rpc::RPCServer;
             friend class session::Session;
+            friend class session::OutboundSession;  // make_session_init reads fetch_auth_token (F4b)
 
             // Inbound path lifetimes within a slot are always determined relative to this base
             // value, so that if we need a path in the (15,20] minute range, we will always pick the
@@ -38,6 +39,11 @@ namespace srouter
 
             std::unordered_map<NetworkAddress, std::shared_ptr<session::Session>> _sessions;
             std::unordered_map<session_tag, std::shared_ptr<session::Session>> _session_tags;
+
+            // F12 replay protection: recently-seen v2 session-init identifiers mapped to their
+            // expiry (the init timestamp + INIT_TS_WINDOW).  Pruned lazily in session_post_init; the
+            // freshness window bounds its size.
+            std::unordered_map<std::string, sys_ms> _init_replay;
 
             session_tag last_tag = static_cast<session_tag>(srouter::csrng());
 

@@ -8,6 +8,7 @@
 #include "path/transit_hop.hpp"
 #include "router/router.hpp"
 #include "util/compare_ptr.hpp"
+#include "util/token_bucket.hpp"
 #include "util/zstd.hpp"
 
 #include <oxen/quic/btstream.hpp>
@@ -20,7 +21,10 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstddef>
+#include <string>
 #include <unordered_map>
+#include <vector>
 
 namespace srouter
 {
@@ -75,9 +79,26 @@ namespace srouter::link
 
         std::optional<zstd::compressor> compressor;
 
-        // Registers commands on the client or relay end of a client-relay or relay-relay connection
+        // F11.3: per-source token buckets throttling path builds.  Keyed by the build's source
+        // (relay RouterID or client ConnectionID), touched only from the router loop.
+        std::unordered_map<std::string, util::TokenBucket> _path_build_buckets;
+
+        // F11.5: cached compressed bootstrap-RC response, rebuilt only when the known-RC set changes
+        // (tracked by a cheap version token of count + newest timestamp) rather than on every
+        // request.  Holds the exact bytes sent to the peer.  Router-loop only.
+        std::vector<std::byte> _bootstrap_rc_cache;
+        size_t _bootstrap_rc_cache_count{0};
+        std::chrono::sys_seconds _bootstrap_rc_cache_newest{};
+
+        // Registers commands on the client or relay end of a client-relay or relay-relay connection.
+        // `alpn` is the negotiated ALPN of the connection: the relay-to-relay direct commands are
+        // registered only on a RELAY_ALPN connection (F11.1), whose peer the key-verify callback has
+        // already confirmed to be a registered service node.
         // NB: this could be called from either the network or router loop thread!
-        void register_commands(quic::BTRequestStream& s, const std::variant<RouterID, quic::ConnectionID>& remote);
+        void register_commands(
+            quic::BTRequestStream& s,
+            const std::variant<RouterID, quic::ConnectionID>& remote,
+            std::string_view alpn);
 
         // Registered the bootstrap command (bfetch_rcs) on the server (i.e. incoming) bootstrap
         // connection (i.e.  to the relay being used as a bootstrap).  The client side of such a

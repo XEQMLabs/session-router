@@ -10,12 +10,57 @@
 #include <nlohmann/json.hpp>
 #include <oxenc/base32z.h>
 
+#ifndef _WIN32
+#include <grp.h>
+#include <sys/stat.h>
+
+#include <array>
+#include <cerrno>
+#include <cstring>
+#endif
+
 #include <exception>
+#include <stdexcept>
 #include <vector>
 
 namespace srouter::rpc
 {
     static auto logcat = srouter::log::Cat("rpc-server");
+
+#ifndef _WIN32
+    // Tighten the permissions on a just-bound ipc:// control socket so it is not world-connectable.
+    // OMQ creates the socket with umask-derived permissions, so without this an unauthenticated
+    // local user could reach the (admin-level) control RPC. 0600 by owner only; 0660 plus a group
+    // chown when the operator names an admin group via [api] rpc-group.
+    static void secure_ipc_socket(const std::string& bind_addr, const std::string& group)
+    {
+        // Strip the "ipc://" scheme to get the filesystem path.
+        std::string path = bind_addr.substr(bind_addr.find("://") + 3);
+        mode_t mode = 0600;
+
+        if (not group.empty())
+        {
+            std::array<char, 4096> buf{};
+            struct group grp{};
+            struct group* result = nullptr;
+            if (getgrnam_r(group.c_str(), &grp, buf.data(), buf.size(), &result) == 0 and result)
+            {
+                if (chown(path.c_str(), static_cast<uid_t>(-1), grp.gr_gid) == 0)
+                    mode = 0660;
+                else
+                    log::warning(
+                        logcat, "Could not chown RPC socket {} to group {}: {}", path, group, std::strerror(errno));
+            }
+            else
+                log::warning(logcat, "[api] rpc-group '{}' not found; leaving RPC socket owner-only", group);
+        }
+
+        if (chmod(path.c_str(), mode) != 0)
+            log::warning(logcat, "Could not set permissions on RPC socket {}: {}", path, std::strerror(errno));
+        else
+            log::debug(logcat, "Secured RPC socket {} to mode {:o}", path, mode);
+    }
+#endif
 
     template <typename T>
         requires std::derived_from<T, RPCRequest>
@@ -67,6 +112,7 @@ namespace srouter::rpc
         rpc_callback cback{};
 
         cback.invoke = make_invoke<RPC>();
+        cback.auth_level = RPC::auth_level;
 
         regs.emplace(RPC::name, std::move(cback));
     }
@@ -76,10 +122,66 @@ namespace srouter::rpc
         if (srouter::logRingBuffer)
             log_subs.emplace(_omq, srouter::logRingBuffer);
 
-        for (const auto& addr : _router.config().api.rpc_bind_addrs)
+        const auto& api = _router.config().api;
+
+        // Bound the control-RPC message size on this dedicated OMQ instance. The oxend client runs
+        // on a separate instance that keeps the unlimited size needed for the service-node list, so
+        // capping here does not affect it.
+        if (api.rpc_max_request_size > 0)
+            _omq.MAX_MSG_SIZE = api.rpc_max_request_size;
+
+        for (const auto& addr : api.rpc_bind_addrs)
         {
-            _omq.listen_plain(addr);
-            log::debug(logcat, "Bound RPC server to {}", addr);
+            const bool is_ipc = addr.starts_with("ipc://");
+            const bool is_loopback = addr.find("127.0.0.1") != std::string::npos
+                || addr.find("[::1]") != std::string::npos || addr.find("localhost") != std::string::npos;
+
+            if (not is_ipc and not is_loopback)
+            {
+                // A non-loopback TCP bind exposes router control to the network. Refuse by default;
+                // the operator must explicitly accept the exposure.
+                if (not api.allow_insecure_rpc)
+                    throw std::runtime_error{
+                        "Refusing to bind the control RPC to non-loopback address " + addr
+                        + ": prefer an ipc:// socket or tcp://127.0.0.1, or set [api] allow-insecure-rpc=true "
+                          "only if you understand the exposure."};
+                log::warning(
+                    logcat,
+                    "RPC bound to non-loopback address {} with allow-insecure-rpc set: the control RPC is "
+                    "reachable from the network.",
+                    addr);
+            }
+
+            // Grant admin on the local IPC socket (gated by the filesystem permissions set below in
+            // the on-bind callback). A plain TCP connection is basic (read-only) unless the operator
+            // opted into insecure admin-over-TCP.
+            const oxenmq::AuthLevel level =
+                (is_ipc or api.allow_insecure_rpc) ? oxenmq::AuthLevel::admin : oxenmq::AuthLevel::basic;
+
+            const std::string bind_addr = addr;
+#ifndef _WIN32
+            const std::string rpc_group = api.rpc_group;
+#endif
+            _omq.listen_plain(
+                addr,
+                [level](std::string_view, std::string_view, bool) { return level; },
+                [this, bind_addr, is_ipc
+#ifndef _WIN32
+                 ,
+                 rpc_group
+#endif
+            ](bool success) {
+                    if (not success)
+                    {
+                        log::error(logcat, "Failed to bind RPC server to {}", bind_addr);
+                        return;
+                    }
+#ifndef _WIN32
+                    if (is_ipc)
+                        secure_ipc_socket(bind_addr, rpc_group);
+#endif
+                    log::debug(logcat, "Bound RPC server to {}", bind_addr);
+                });
         }
 
         AddCategories();
@@ -100,14 +202,19 @@ namespace srouter::rpc
 
     void RPCServer::AddCategories()
     {
-        _omq.add_category("llarp", oxenmq::AuthLevel::none).add_request_command("logs", [this](oxenmq::Message& msg) {
-            HandleLogsSubRequest(msg);
-        });
+        // Two tiers: the "srouter" category holds read-only commands at basic auth; the "admin"
+        // category holds mutating/sensitive commands at admin auth. A connection's auth level is
+        // set per-listener (admin on the local IPC socket, basic on plain TCP), so a mutating call
+        // over an unprivileged connection is rejected by OMQ before it reaches a handler.
+        _omq.add_category("srouter", oxenmq::AuthLevel::basic);
+        _omq.add_category("admin", oxenmq::AuthLevel::admin)
+            .add_request_command("logs", [this](oxenmq::Message& msg) { HandleLogsSubRequest(msg); });
 
         for (auto& req : rpc_request_map)
         {
+            const char* category = req.second.auth_level == oxenmq::AuthLevel::basic ? "srouter" : "admin";
             _omq.add_request_command(
-                "llarp", req.first, [name = std::string_view{req.first}, &call = req.second, this](oxenmq::Message& m) {
+                category, req.first, [name = std::string_view{req.first}, &call = req.second, this](oxenmq::Message& m) {
                     call.invoke(m, *this);
                 });
         }
@@ -323,8 +430,11 @@ namespace srouter::rpc
         }
 
         _router._jq->call([this, netaddr = *maybe_netaddr, replier = findcc.move()]() mutable {
+            // Move the replier into the inner callback: lookup_client_intro stores it for an async
+            // network response that fires after this outer job has returned and been destroyed, so
+            // capturing it by reference was a use-after-free.
             _router.session_endpoint().lookup_client_intro(
-                netaddr.pubkey, [&replier](std::optional<srouter::ClientContact> cc) {
+                netaddr.pubkey, [replier = std::move(replier)](std::optional<srouter::ClientContact> cc) mutable {
                     nlohmann::json result;
                     if (cc)
                     {

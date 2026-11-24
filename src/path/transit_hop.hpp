@@ -25,6 +25,7 @@ namespace srouter::path
         inline static TransitHopError INVALID_PAYLOAD() { return "INVALID TRANSIT HOP PAYLOAD"s; }
         inline static TransitHopError INVALID_HOP_ID() { return "INVALID TRANSIT HOP IDS"s; }
         inline static TransitHopError HOP_ID_UNAVAILABLE() { return "TRANSIT HOP ID ALREADY IN USE"s; }
+        inline static TransitHopError NO_TRANSIT_CAPACITY() { return "RELAY AT TRANSIT CAPACITY"s; }
         inline static TransitHopError INVALID_LIFETIME() { return "INVALID PATH LIFETIME"s; }
         inline static TransitHopError UPSTREAM_UNREACHABLE() { return "UPSTREAM UNREACHABLE"s; }
     };

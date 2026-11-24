@@ -224,6 +224,22 @@ namespace srouter::session
             return;
         }
 
+        // Default-deny: an inbound tunnelled stream may only reach a port the operator has listed
+        // in [network]:tcp-tunnel-allow-ports. With none listed, every accepted inbound connection
+        // is refused, so a service bound to a wildcard address is not reachable over the tunnel by
+        // default.
+        if (const auto& allow_ports = _session._r.config().network.tcp_tunnel_allow_ports;
+            !allow_ports.contains(dest_port))
+        {
+            log::warning(
+                logcat,
+                "Refusing tunnelled stream {}: port {} is not in [network]:tcp-tunnel-allow-ports",
+                stream->stream_id(),
+                dest_port);
+            stream->close(tunnel_error::REFUSED);
+            return;
+        }
+
         auto target = accept_target(dest_port);
         if (!target)
         {
@@ -235,10 +251,16 @@ namespace srouter::session
         log::debug(logcat, "Tunnelled stream {} from {} wants {}", stream->stream_id(), _session._remote, *target);
 
         auto stream_id = stream->stream_id();
-        auto conn = TCPHandle::connect(_session._r.loop(), *target, std::move(stream));
+        // Pass a copy, not a move: connect() consumes its own reference, and on failure we need a
+        // live handle left to refuse the stream. On success our extra reference is dropped at the
+        // end of this function, leaving the TCPConnection as the sole owner as before.
+        auto conn = TCPHandle::connect(_session._r.loop(), *target, stream);
         if (!conn)
         {
             log::warning(logcat, "Could not connect to {} for tunnelled stream {}", *target, stream_id);
+            // Refuse the stream now instead of leaving it open to linger until the QUIC idle
+            // timeout; matches the port-0 and no-target refusals above.
+            stream->close(tunnel_error::REFUSED);
             return;
         }
 

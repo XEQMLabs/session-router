@@ -28,6 +28,8 @@ namespace srouter
             using result_type = std::variant<oxenc::bt_value, nlohmann::json, std::string>;
             //  calls with incoming request data; returns response body or throws exception
             void (*invoke)(oxenmq::Message&, RPCServer&);
+            //  minimum auth level required; decides which OMQ category the command is registered in
+            oxenmq::AuthLevel auth_level = oxenmq::AuthLevel::admin;
         };
 
         //  RPC request registration
@@ -127,7 +129,19 @@ namespace srouter
 
                 if (rpc.replier.has_value())
                 {
-                    rpc.send_response();
+                    // An invoke() may leave the response null (e.g. the unimplemented status
+                    // handlers). json_to_bt throws on a top-level null for a bt-mode request, and
+                    // this runs outside the try above, so the throw would escape the OMQ command
+                    // handler. Normalise null to an empty object and guard the serialization.
+                    if (rpc.response.is_null())
+                        rpc.response = nlohmann::json::object();
+                    try
+                    {
+                        rpc.send_response();
+                    }
+                    catch (const std::exception&)
+                    {
+                    }
                 }
             }
         };

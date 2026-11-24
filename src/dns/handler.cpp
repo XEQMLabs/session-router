@@ -9,6 +9,8 @@
 #include "util/logging.hpp"
 #include "util/logging/buffer.hpp"
 
+#include <sodium/randombytes.h>
+
 #include <ranges>
 
 namespace srouter::dns
@@ -61,6 +63,11 @@ namespace srouter::dns
 
     RequestHandler::RequestHandler(Router& router) : _router{router}
     {
+        // Seed the DNS server-cookie secret with fresh randomness; it was otherwise left
+        // uninitialised, so the server cookies derived from it were predictable (and rotate on
+        // restart as intended once seeded here).
+        randombytes_buf(_cookie_secret.data(), _cookie_secret.size());
+
         if (!_router.tun_endpoint())
             throw std::logic_error{"dns::RequestHandler requires a TUN endpoint"};
 

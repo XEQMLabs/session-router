@@ -12,6 +12,10 @@ fi
 
 echo "$SSH_KEY" >ssh_key
 
+# Remove the private upload key from the workspace when the script exits, however it exits, so it
+# is never left behind in the build directory or a cached workspace.
+trap 'rm -f ssh_key' EXIT
+
 set -o xtrace  # Don't start tracing until *after* we write the ssh key
 
 chmod 600 ssh_key

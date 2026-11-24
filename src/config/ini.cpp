@@ -89,7 +89,12 @@ namespace srouter
                     throw std::runtime_error(fmt::format("{} invalid line ({}): '{}'", _file_desc, lineno, line));
                 }
 
-                log::debug(logcat, "{}:[{}]:{}={}", _file_desc, sectName, k, v);
+                // Don't log secret values: auth tokens and key material would otherwise land in the
+                // debug log in cleartext.
+                const bool sensitive = k == "auth-static" || k == "auth" || k.find("token") != std::string_view::npos
+                    || k.find("secret") != std::string_view::npos || k.find("password") != std::string_view::npos;
+                log::debug(
+                    logcat, "{}:[{}]:{}={}", _file_desc, sectName, k, sensitive ? std::string_view{"[redacted]"} : v);
                 _config[std::string{sectName}][std::string{k}].emplace_back(v);
             }
             else  // malformed?

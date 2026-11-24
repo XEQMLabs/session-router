@@ -28,6 +28,11 @@ namespace srouter::rpc
         bool bt = false;
 
       public:
+        // Minimum OMQ auth level required to invoke this command.  Defaults to admin so a newly
+        // added command is privileged unless it deliberately opts down to basic (fail closed).
+        // Commands are registered into the matching OMQ category by this value.
+        static constexpr oxenmq::AuthLevel auth_level = oxenmq::AuthLevel::admin;
+
         //  Returns true if response is bt-encoded, and false for json
         //  Note: do not set value
         bool is_bt() const { return bt; }

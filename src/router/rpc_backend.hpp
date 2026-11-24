@@ -37,7 +37,12 @@ namespace srouter
     // core library.
     struct RpcBackendHooks
     {
-        std::shared_ptr<oxenmq::OxenMQ> (*make_omq)();
+        // The oxend client and the control RPC server run on separate OxenMQ instances: the oxend
+        // instance keeps an unlimited message size (the service-node list exceeds 1MB) while the RPC
+        // instance is bounded and minimally threaded, so the control surface cannot be used for
+        // memory exhaustion via huge frames.
+        std::shared_ptr<oxenmq::OxenMQ> (*make_oxend_omq)();
+        std::shared_ptr<oxenmq::OxenMQ> (*make_rpc_omq)();
         void (*start_omq)(oxenmq::OxenMQ&);
         std::shared_ptr<rpc::IOxendClient> (*make_oxend)(Router&, oxenmq::OxenMQ&);
         std::shared_ptr<rpc::RPCServer> (*make_rpc_server)(Router&, oxenmq::OxenMQ&);

@@ -33,7 +33,10 @@ namespace srouter::dns
             b = b.subspan(1);
             if (!len)
                 break;
-            if (len >= b.size())
+            // RFC 1035: a label is at most 63 octets (a larger length byte would be a compression
+            // pointer or garbage, neither valid for a question name here), and it must lie within
+            // the remaining buffer.
+            if (len > 63 || len >= b.size())
             {
                 name.reset();
                 return name;
@@ -41,6 +44,13 @@ namespace srouter::dns
             name->append(reinterpret_cast<const char*>(b.data()), len);
             *name += '.';
             b = b.subspan(len);
+            // RFC 1035: a name is at most 255 octets. Cap it here so an over-long name cannot later
+            // overflow a fixed response buffer when it is encoded back out.
+            if (name->size() > 255)
+            {
+                name.reset();
+                return name;
+            }
         }
 
         if (name->empty())

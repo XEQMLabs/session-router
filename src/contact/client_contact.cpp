@@ -146,6 +146,17 @@ namespace srouter
             PubKey blinded;
             oxenc::bt_dict_consumer btdc{enccc};
             blinded.assign(btdc.require_span<std::byte, PubKey::SIZE>("i"));
+
+            // The signature below is verified with this message-supplied "i" key, so without binding
+            // it to the target we would accept a contact signed by any key at all. Require
+            // i == blind(root, CLIENT_CONTACT): only the holder of root's secret can produce a
+            // signature valid under that blinded key, so this rejects forged contacts for `root`.
+            PubKey expected_blinded;
+            if (not crypto::blind(expected_blinded, root, crypto::blinding::CLIENT_CONTACT))
+                throw std::runtime_error{"could not derive expected blinded key for client contact"};
+            if (blinded != expected_blinded)
+                throw std::runtime_error{"client contact blinded key does not match target root"};
+
             SymmNonce nonce;
             nonce.assign(btdc.require_span<std::byte, SymmNonce::SIZE>("n"));
             auto signed_at = sys_ms{std::chrono::milliseconds{btdc.require<int64_t>("t")}};
