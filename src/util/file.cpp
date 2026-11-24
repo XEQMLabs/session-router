@@ -5,14 +5,17 @@
 
 #include <fcntl.h>
 
+#include <cstdlib>
 #include <fstream>
 #include <ios>
 #include <stdexcept>
 #include <system_error>
+#include <vector>
 
 #ifdef WIN32
 #include <io.h>
 #else
+#include <sys/stat.h>
 #include <unistd.h>
 #endif
 
@@ -46,6 +49,60 @@ namespace srouter::util
         out.exceptions(std::ifstream::failbit | std::ifstream::badbit);
         out.open(filename, std::ios::binary | std::ios::out | std::ios::trunc);
         out.write(contents.data(), static_cast<std::streamsize>(contents.size()));
+    }
+
+    void buffer_to_private_file(const std::filesystem::path& filename, std::string_view contents)
+    {
+#ifndef _WIN32
+        // mkstemp creates a brand-new unique file with O_CREAT|O_EXCL and mode 0600, so the secret
+        // is private from creation and cannot be redirected through a pre-existing symlink.
+        std::string tmpl = filename.string() + ".XXXXXX";
+        std::vector<char> path(tmpl.begin(), tmpl.end());
+        path.push_back('\0');
+        int fd = ::mkstemp(path.data());
+        if (fd == -1)
+            throw std::system_error{
+                errno, std::generic_category(), "cannot create temp file for {}"_format(filename.string())};
+
+        try
+        {
+            ::fchmod(fd, 0600);  // mkstemp is 0600 on modern libc, but be explicit
+            const char* p = contents.data();
+            size_t left = contents.size();
+            while (left)
+            {
+                ssize_t n = ::write(fd, p, left);
+                if (n < 0)
+                {
+                    if (errno == EINTR)
+                        continue;
+                    throw std::system_error{
+                        errno, std::generic_category(), "cannot write {}"_format(std::string{path.data()})};
+                }
+                p += n;
+                left -= static_cast<size_t>(n);
+            }
+            ::close(fd);
+        }
+        catch (...)
+        {
+            ::close(fd);
+            ::unlink(path.data());
+            throw;
+        }
+
+        std::error_code ec;
+        std::filesystem::rename(std::filesystem::path{path.data()}, filename, ec);
+        if (ec)
+        {
+            ::unlink(path.data());
+            throw std::system_error{
+                ec, "cannot rename {} to {}"_format(std::string{path.data()}, filename.string())};
+        }
+#else
+        // No POSIX mode/symlink controls here; fall back to a plain write.
+        buffer_to_file(filename, contents);
+#endif
     }
 
     static std::error_code errno_error()

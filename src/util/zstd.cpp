@@ -112,6 +112,12 @@ namespace srouter::zstd
             if (ZSTD_isError(ret) or (max_size > 0 && decompressed.size() + output.pos > max_size))
                 return std::nullopt;
 
+            // Truncated input: the stream still wants bytes (ret > 0) but the input is exhausted and
+            // this pass produced no output, so no further progress is possible. Without this the
+            // loop would spin forever on a truncated frame (e.g. a malicious bootstrap blob).
+            if (ret > 0 and input.pos == input.size and output.pos == 0)
+                return std::nullopt;
+
             decompressed.insert(decompressed.end(), out_buf.begin(), out_buf.begin() + output.pos);
         } while (ret > 0 or input.pos < input.size);
 

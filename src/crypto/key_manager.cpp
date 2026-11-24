@@ -49,11 +49,11 @@ namespace srouter
                 out.reserve(129);
                 oxenc::to_hex(key.begin(), key.end(), std::back_inserter(out));
                 out += '\n';
-                util::buffer_to_file(fname, out);
+                util::buffer_to_private_file(fname, out);
             }
             else
             {
-                util::buffer_to_file(fname, key.to_view());
+                util::buffer_to_private_file(fname, key.to_view());
             }
         }
         catch (const std::exception& e)
